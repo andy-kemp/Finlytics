@@ -1,0 +1,110 @@
+<step title="BackgroundTrace" date="2026-06-17T18:15:10.379" instance="bd740a" url="/api/zipdeploy" method="POST" >
+  <step title="Updating shutdown sentinel last write time" date="2026-06-17T18:15:10.426" SemaphoreCount="7" /><!-- duration: 32ms -->
+  <step title="LockFile &apos;C:\home\site\locks\deployments.lock&apos; acquired" date="2026-06-17T18:15:10.473" /><!-- duration: 31ms -->
+  <step title="Creating temporary deployment" date="2026-06-17T18:15:10.519" /><!-- duration: 203ms -->
+  <step title="Performing fetch based deployment" date="2026-06-17T18:15:10.754" >
+    <step title="Fetching changes." date="2026-06-17T18:15:11.082" /><!-- duration: 62ms -->
+    <step title="Starting LocalZipHandler" date="2026-06-17T18:15:11.176" /><!-- duration: 31ms -->
+    <step title="Cleaning up temp folders from previous zip deployments and extracting pushed zip file C:\local\Temp\zipdeploy\czcwfdd5.zip (43.70 MB) to C:\local\Temp\zipdeploy\extracted" date="2026-06-17T18:15:11.488" /><!-- duration: 31ms -->
+    <step title="Cleaning up temp folders from previous zip deployments and extracting pushed zip file C:\local\Temp\zipdeploy\czcwfdd5.zip (43.70 MB) to C:\local\Temp\zipdeploy\extracted" date="2026-06-17T18:15:11.535" >
+      <step title="Extracting 172 entries to C:\local\Temp\zipdeploy\extracted directory" date="2026-06-17T18:15:11.582" >
+        <step title="Extracting to C:\local\Temp\zipdeploy\extracted\.azurefunctions\function.deps.json ..." date="2026-06-17T18:15:11.613" /><!-- duration: 47ms -->
+        <step title="Extracting to C:\local\Temp\zipdeploy\extracted\.azurefunctions\Microsoft.Azure.Functions.Worker.Extensions.dll ..." date="2026-06-17T18:15:11.691" /><!-- duration: 47ms -->
+        <step title="Extracting to C:\local\Temp\zipdeploy\extracted\.azurefunctions\Microsoft.Azure.Functions.Worker.Extensions.pdb ..." date="2026-06-17T18:15:11.754" /><!-- duration: 31ms -->
+        <step title="Extracting to C:\local\Temp\zipdeploy\extracted\.azurefunctions\Microsoft.Azure.WebJobs.Extensions.FunctionMetadataLoader.dll ..." date="2026-06-17T18:15:11.816" /><!-- duration: 31ms -->
+        <step title="Extracting to C:\local\Temp\zipdeploy\extracted\.azurefunctions\Microsoft.Azure.WebJobs.Host.Storage.dll ..." date="2026-06-17T18:15:11.863" /><!-- duration: 31ms -->
+        <step title="Omitting extracting file traces ..." date="2026-06-17T18:15:11.926" /><!-- duration: 31ms -->
+      </step><!-- duration: 1672ms -->
+    </step><!-- duration: 1766ms -->
+    <step title="Before sending BuildRequestReceived status to /api/updatedeploystatus" date="2026-06-17T18:15:13.316" /><!-- duration: 31ms -->
+    <step title="DeploymentManager.Deploy(id:f37da3c4f62c47468b54134979fb3a0f)" date="2026-06-17T18:15:13.394" >
+      <step title="Collecting changeset information" date="2026-06-17T18:15:13.441" /><!-- duration: 219ms -->
+      <step title="Updating submodules" date="2026-06-17T18:15:13.676" >
+        <step title="Updating submodules." date="2026-06-17T18:15:13.895" /><!-- duration: 31ms -->
+      </step><!-- duration: 282ms -->
+      <step title="Preparing deployment for commit id &apos;f37da3c4f6&apos;." date="2026-06-17T18:15:14.192" /><!-- duration: 31ms -->
+      <step title="Determining deployment builder" date="2026-06-17T18:15:14.489" >
+        <step title="Builder is BasicBuilder" date="2026-06-17T18:15:14.505" /><!-- duration: 31ms -->
+      </step><!-- duration: 78ms -->
+      <step title="Copying SSH keys" date="2026-06-17T18:15:14.645" /><!-- duration: 47ms -->
+      <step title="Building" date="2026-06-17T18:15:14.708" >
+        <step title="Generating deployment script." date="2026-06-17T18:15:15.005" /><!-- duration: 31ms -->
+        <step title="Generating deployment script" date="2026-06-17T18:15:15.067" >
+          <step title="Using the following command to generate deployment script: &apos;azure site deploymentscript -y --no-dot-deployment -r &quot;C:\local\Temp\zipdeploy\extracted&quot; -o &quot;C:\home\site\deployments\tools&quot; --basic --sitePath &quot;C:\local\Temp\zipdeploy\extracted&quot;&apos;." date="2026-06-17T18:15:15.208" /><!-- duration: 31ms -->
+          <step title="Executing external process" date="2026-06-17T18:15:15.286" type="process" path="starter.cmd" arguments="&quot;C:\Program Files (x86)\SiteExtensions\Kudu\2026.05.1.3\bin\node_modules\.bin\kuduscript.cmd&quot; -y --no-dot-deployment -r &quot;C:\local\Temp\zipdeploy\extracted&quot; -o &quot;C:\home\site\deployments\tools&quot; --basic --sitePath &quot;C:\local\Temp\zipdeploy\extracted&quot;" >
+            <step title="Generating deployment script for Web Site" date="2026-06-17T18:15:16.345" /><!-- duration: 31ms -->
+            <step title="Generated deployment script files" date="2026-06-17T18:15:16.438" /><!-- duration: 31ms -->
+          </step><!-- duration: 1215ms -->
+          <step title="Saved cached version of the deployment script for command -y --no-dot-deployment -r &quot;C:\local\Temp\zipdeploy\extracted&quot; -o &quot;C:\home\site\deployments\tools&quot; --basic --sitePath &quot;C:\local\Temp\zipdeploy\extracted&quot;" date="2026-06-17T18:15:16.548" /><!-- duration: 31ms -->
+        </step><!-- duration: 1527ms -->
+        <step title="Running deployment command..." date="2026-06-17T18:15:16.845" /><!-- duration: 16ms -->
+        <step title="Command: &quot;C:\home\site\deployments\tools\deploy.cmd&quot;" date="2026-06-17T18:15:16.907" /><!-- duration: 31ms -->
+        <step title="Executing external process" date="2026-06-17T18:15:16.970" type="process" path="starter.cmd" arguments="&quot;C:\home\site\deployments\tools\deploy.cmd&quot;" >
+          <step title="Handling Basic Web Site deployment." date="2026-06-17T18:15:17.689" /><!-- duration: 31ms -->
+          <step title="Creating app_offline.htm" date="2026-06-17T18:15:19.987" /><!-- duration: 16ms -->
+          <step title="KuduSync.NET from: &apos;C:\local\Temp\zipdeploy\extracted&apos; to: &apos;C:\home\site\wwwroot&apos;" date="2026-06-17T18:15:20.050" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Azure.AI.FormRecognizer.dll&apos;" date="2026-06-17T18:15:20.143" /><!-- duration: 16ms -->
+          <step title="Copying file: &apos;Azure.Core.dll&apos;" date="2026-06-17T18:15:20.222" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Azure.Identity.dll&apos;" date="2026-06-17T18:15:20.315" /><!-- duration: 16ms -->
+          <step title="Copying file: &apos;Azure.Security.KeyVault.Secrets.dll&apos;" date="2026-06-17T18:15:20.393" /><!-- duration: 16ms -->
+          <step title="Copying file: &apos;Azure.Storage.Blobs.dll&apos;" date="2026-06-17T18:15:20.456" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Azure.Storage.Common.dll&apos;" date="2026-06-17T18:15:20.534" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;BCrypt.Net-Next.dll&apos;" date="2026-06-17T18:15:20.612" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;extensions.json&apos;" date="2026-06-17T18:15:20.691" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;FinanceHubFunctions.deps.json&apos;" date="2026-06-17T18:15:20.769" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;FinanceHubFunctions.dll&apos;" date="2026-06-17T18:15:20.878" /><!-- duration: 16ms -->
+          <step title="Copying file: &apos;FinanceHubFunctions.exe&apos;" date="2026-06-17T18:15:20.956" /><!-- duration: 16ms -->
+          <step title="Copying file: &apos;FinanceHubFunctions.pdb&apos;" date="2026-06-17T18:15:21.034" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;FinanceHubFunctions.runtimeconfig.json&apos;" date="2026-06-17T18:15:21.112" /><!-- duration: 16ms -->
+          <step title="Copying file: &apos;functions.metadata&apos;" date="2026-06-17T18:15:21.175" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Google.Protobuf.dll&apos;" date="2026-06-17T18:15:21.269" /><!-- duration: 16ms -->
+          <step title="Copying file: &apos;Grpc.Core.Api.dll&apos;" date="2026-06-17T18:15:21.347" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Grpc.Net.Client.dll&apos;" date="2026-06-17T18:15:21.441" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Grpc.Net.ClientFactory.dll&apos;" date="2026-06-17T18:15:21.519" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Grpc.Net.Common.dll&apos;" date="2026-06-17T18:15:21.612" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;host.json&apos;" date="2026-06-17T18:15:21.691" /><!-- duration: 16ms -->
+          <step title="Copying file: &apos;HtmlRendererCore.dll&apos;" date="2026-06-17T18:15:21.769" /><!-- duration: 16ms -->
+          <step title="Copying file: &apos;HtmlRendererCore.PdfSharpCore.dll&apos;" date="2026-06-17T18:15:21.831" /><!-- duration: 24ms -->
+          <step title="Copying file: &apos;ICSharpCode.SharpZipLib.dll&apos;" date="2026-06-17T18:15:21.902" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Microsoft.AI.DependencyCollector.dll&apos;" date="2026-06-17T18:15:21.980" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Microsoft.AI.EventCounterCollector.dll&apos;" date="2026-06-17T18:15:22.074" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Microsoft.AI.PerfCounterCollector.dll&apos;" date="2026-06-17T18:15:22.152" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Microsoft.AI.ServerTelemetryChannel.dll&apos;" date="2026-06-17T18:15:22.246" /><!-- duration: 16ms -->
+          <step title="Copying file: &apos;Microsoft.AI.WindowsServer.dll&apos;" date="2026-06-17T18:15:22.324" /><!-- duration: 62ms -->
+          <step title="Copying file: &apos;Microsoft.ApplicationInsights.dll&apos;" date="2026-06-17T18:15:22.464" /><!-- duration: 63ms -->
+          <step title="Copying file: &apos;Microsoft.ApplicationInsights.WorkerService.dll&apos;" date="2026-06-17T18:15:22.605" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Microsoft.AspNetCore.WebUtilities.dll&apos;" date="2026-06-17T18:15:22.699" /><!-- duration: 16ms -->
+          <step title="Copying file: &apos;Microsoft.Azure.Functions.Worker.ApplicationInsights.dll&apos;" date="2026-06-17T18:15:22.778" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Microsoft.Azure.Functions.Worker.Core.dll&apos;" date="2026-06-17T18:15:22.855" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Microsoft.Azure.Functions.Worker.dll&apos;" date="2026-06-17T18:15:22.933" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Microsoft.Azure.Functions.Worker.Extensions.Abstractions.dll&apos;" date="2026-06-17T18:15:23.011" /><!-- duration: 16ms -->
+          <step title="Copying file: &apos;Microsoft.Azure.Functions.Worker.Extensions.Http.dll&apos;" date="2026-06-17T18:15:23.089" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Microsoft.Azure.Functions.Worker.Extensions.Timer.dll&apos;" date="2026-06-17T18:15:23.168" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Microsoft.Azure.Functions.Worker.Grpc.dll&apos;" date="2026-06-17T18:15:23.246" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Microsoft.Bcl.AsyncInterfaces.dll&apos;" date="2026-06-17T18:15:23.324" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Microsoft.Data.SqlClient.dll&apos;" date="2026-06-17T18:15:23.402" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Microsoft.EntityFrameworkCore.Abstractions.dll&apos;" date="2026-06-17T18:15:23.496" /><!-- duration: 16ms -->
+          <step title="Copying file: &apos;Microsoft.EntityFrameworkCore.dll&apos;" date="2026-06-17T18:15:23.558" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Microsoft.EntityFrameworkCore.Relational.dll&apos;" date="2026-06-17T18:15:23.638" /><!-- duration: 29ms -->
+          <step title="Copying file: &apos;Microsoft.EntityFrameworkCore.SqlServer.dll&apos;" date="2026-06-17T18:15:23.714" /><!-- duration: 16ms -->
+          <step title="Copying file: &apos;Microsoft.Extensions.Caching.Abstractions.dll&apos;" date="2026-06-17T18:15:23.793" /><!-- duration: 16ms -->
+          <step title="Copying file: &apos;Microsoft.Extensions.Caching.Memory.dll&apos;" date="2026-06-17T18:15:23.871" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Microsoft.Extensions.Configuration.Abstractions.dll&apos;" date="2026-06-17T18:15:23.949" /><!-- duration: 31ms -->
+          <step title="Copying file: &apos;Microsoft.Extensions.Configuration.Binder.dll&apos;" date="2026-06-17T18:15:24.027" /><!-- duration: 47ms -->
+          <step title="Omitting next output lines..." date="2026-06-17T18:15:24.121" /><!-- duration: 31ms -->
+          <step title="Finished successfully." date="2026-06-17T18:15:28.568" /><!-- duration: 31ms -->
+        </step><!-- duration: 11645ms -->
+        <step title="Running post deployment command(s)..." date="2026-06-17T18:15:28.864" /><!-- duration: 31ms -->
+        <step title="Triggering recycle (preview mode disabled)." date="2026-06-17T18:15:29.193" /><!-- duration: 16ms -->
+        <step title="Ignoring FS watcher based recycle request as this is a classic Windows app." date="2026-06-17T18:15:29.239" /><!-- duration: 31ms -->
+        <step title="Deployment successful. DEPLOYMENTINFO: deploymentPath = Functions App ZipDeploy. Extract zip. , deployer = az_cli_functions, os = windows, sku = Dynamic, language = dotnet-isolated, siteName = finlyticsprodfunc, slotName = Production, siteHostName = finlyticsprodfunc.azurewebsites.net, deploymentStatus = Success" date="2026-06-17T18:15:29.505" /><!-- duration: 47ms -->
+      </step><!-- duration: 15313ms -->
+    </step><!-- duration: 16658ms -->
+    <step title="Cleaning up temp files" date="2026-06-17T18:15:30.083" /><!-- duration: 31ms -->
+    <step title="Begin HttpPost https://finlyticsprodfunc.scm.azurewebsites.net/operations/settriggers, x-ms-request-id: 21702943-6a78-11f1-8ded-6045bdf246ca" date="2026-06-17T18:15:30.255" /><!-- duration: 31ms -->
+    <step title="End HttpPost, status: OK" date="2026-06-17T18:15:30.880" /><!-- duration: 31ms -->
+    <step title="Scheduling background sync triggers after delay" date="2026-06-17T18:15:30.943" /><!-- duration: 16ms -->
+  </step><!-- duration: 20330ms -->
+  <step title="Deployment completed. Total deployment time: 20357ms" date="2026-06-17T18:15:31.114" /><!-- duration: 31ms -->
+  <step title="LockFile &apos;C:\home\site\locks\deployments.lock&apos; released" date="2026-06-17T18:15:31.177" /><!-- duration: 16ms -->
+</step><!-- duration: 20876ms -->

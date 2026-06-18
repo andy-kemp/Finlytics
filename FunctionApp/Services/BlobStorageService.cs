@@ -1,3 +1,5 @@
+﻿#nullable enable
+using Azure.Core;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using System;
@@ -19,6 +21,11 @@ namespace FinanceHubFunctions.Services
         public BlobStorageService(string connectionString)
         {
             _blobServiceClient = new BlobServiceClient(connectionString);
+        }
+
+        public BlobStorageService(Uri blobServiceUri, TokenCredential credential)
+        {
+            _blobServiceClient = new BlobServiceClient(blobServiceUri, credential);
         }
 
         public async Task<string> UploadReceiptAsync(int expenseId, string expenseCode, byte[] fileContent, string fileName)

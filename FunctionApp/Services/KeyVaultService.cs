@@ -12,10 +12,12 @@ namespace FinanceHubFunctions.Services
 
         public KeyVaultService()
         {
-            // Get Key Vault URL from environment variable
-            var keyVaultUrl = Environment.GetEnvironmentVariable("KEY_VAULT_URL")
-                ?? Environment.GetEnvironmentVariable("KeyVaultUrl")
-                ?? Environment.GetEnvironmentVariable("AZURE_KEY_VAULT_URL")
+            // Get Key Vault URL from environment variables, but ignore empty values.
+            var keyVaultUrl =
+                FirstNonEmpty(
+                    Environment.GetEnvironmentVariable("KEY_VAULT_URL"),
+                    Environment.GetEnvironmentVariable("KeyVaultUrl"),
+                    Environment.GetEnvironmentVariable("AZURE_KEY_VAULT_URL"))
                 ?? "https://fh-kv-kemponline.vault.azure.net/";
             
             // Use Managed Identity in Azure, fallback to DefaultAzureCredential locally
@@ -32,6 +34,19 @@ namespace FinanceHubFunctions.Services
                 credential = new DefaultAzureCredential();
             }
             _secretClient = new SecretClient(new Uri(keyVaultUrl), credential);
+        }
+
+        private static string? FirstNonEmpty(params string?[] values)
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+
+            return null;
         }
 
         public async Task<string> GetSecretAsync(string secretName)

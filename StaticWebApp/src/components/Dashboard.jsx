@@ -142,7 +142,7 @@ export default function Dashboard({ onNavigate }) {
             if (metrics) { setRefreshing(true); } else { setLoading(true); }
             
             // Fire all fetches in parallel — no sequential waterfalls
-            const [invoices, expenses, companyAggregates, settings, filedReturns, dlaEntries, ytdAggregates, billsSummary, payrollSettings, payrollRuns] = await Promise.all([
+            const [invoicesRaw, expensesRaw, companyAggregates, settings, filedReturnsRaw, dlaEntriesRaw, ytdAggregates, billsSummary, payrollSettings, payrollRunsRaw] = await Promise.all([
                 getInvoices(),
                 getExpenses(),
                 getCompanyAggregates(getCurrentPeriodKey()).catch(() => ({})),
@@ -154,6 +154,12 @@ export default function Dashboard({ onNavigate }) {
                 getPayrollSettings().catch(() => null),
                 getPayrollRuns().catch(() => [])
             ]);
+
+            const invoices = Array.isArray(invoicesRaw) ? invoicesRaw : [];
+            const expenses = Array.isArray(expensesRaw) ? expensesRaw : [];
+            const filedReturns = Array.isArray(filedReturnsRaw) ? filedReturnsRaw : [];
+            const dlaEntries = Array.isArray(dlaEntriesRaw) ? dlaEntriesRaw : [];
+            const payrollRuns = Array.isArray(payrollRunsRaw) ? payrollRunsRaw : [];
 
             setCompanySettings(settings);
 

@@ -1,0 +1,21 @@
+name: finlyticsv2 deploy app
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'finlyticsv2/app/**'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build app
+        run: echo "Build the v2 app from finlyticsv2/app"
+
+      - name: Deploy app
+        run: echo "Deploy v2 app to the selected environment"

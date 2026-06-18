@@ -1,0 +1,17 @@
+# Build outputs
+bin/
+obj/
+dist/
+publish/
+
+# Node
+node_modules/
+
+# Local env files
+.env
+.env.*
+local.settings.json
+
+# Logs and packages
+*.log
+*.zip

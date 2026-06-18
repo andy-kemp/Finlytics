@@ -1,0 +1,21 @@
+name: finlyticsv2 deploy infra
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'finlyticsv2/infra/**'
+
+jobs:
+  validate-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate infrastructure
+        run: echo "Validate finlyticsv2 infrastructure definitions"
+
+      - name: Deploy infrastructure
+        run: echo "Deploy infrastructure for the selected environment"

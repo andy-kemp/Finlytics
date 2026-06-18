@@ -1,0 +1,20 @@
+name: finlyticsv2 deploy dev
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'finlyticsv2/app/**'
+      - 'finlyticsv2/infra/**'
+
+jobs:
+  deploy-dev:
+    runs-on: ubuntu-latest
+    environment: development
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy dev
+        run: echo "Deploy approved changes to development"

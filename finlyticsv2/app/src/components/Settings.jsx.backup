@@ -1,0 +1,413 @@
+import React, { useState, useEffect } from 'react';
+import { getCompanySettings, updateCompanySettings } from '../services/apiService';
+
+const CompanyDetails = () => {
+    const [settings, setSettings] = useState({
+        companyName: '',
+        companyAddress: '',
+        companyPhone: '',
+        companyEmail: '',
+        invoicesEmail: '',
+        quotesEmail: '',
+        paymentsEmail: '',
+        companyRegistrationNumber: '',
+        taxRegistrationNumber: '',
+        vatRegistrationNumber: '',
+        bankName: '',
+        bankAccountNumber: '',
+        bankSortCode: '',
+        defaultCurrency: 'GBP',
+        defaultVATRate: '20',
+        invoicePrefix: 'INV',
+        quotePrefix: 'QUO',
+        invoiceTermsDays: '30',
+        invoiceFooterText: '',
+        logoUrl: '',
+        companyInceptionDate: '',
+        fyStartMonth: '',
+        fyStartDay: ''
+    });
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+
+    useEffect(() => {
+        loadSettings();
+    }, []);
+
+    const loadSettings = async () => {
+        try {
+            setLoading(true);
+            const data = await getCompanySettings();
+            console.log('Loaded company settings from API:', data);
+            if (data) {
+                // Directly use the data from API, don't merge with defaults
+                const loadedSettings = {
+                    companyName: data.companyName || '',
+                    companyAddress: data.companyAddress || '',
+                    companyPhone: data.companyPhone || '',
+                    companyEmail: data.companyEmail || '',
+                    invoicesEmail: data.invoicesEmail || '',
+                    quotesEmail: data.quotesEmail || '',
+                    paymentsEmail: data.paymentsEmail || '',
+                    companyRegistrationNumber: data.companyRegistrationNumber || '',
+                    taxRegistrationNumber: data.taxRegistrationNumber || '',
+                    vatRegistrationNumber: data.vatRegistrationNumber || '',
+                    bankName: data.bankName || '',
+                    bankAccountNumber: data.bankAccountNumber || '',
+                    bankSortCode: data.bankSortCode || '',
+                    defaultCurrency: data.defaultCurrency || 'GBP',
+                    defaultVATRate: data.defaultVATRate || '20',
+                    invoicePrefix: data.invoicePrefix || 'INV',
+                    quotePrefix: data.quotePrefix || 'QUO',
+                    invoiceTermsDays: data.invoiceTermsDays || '30',
+                    invoiceFooterText: data.invoiceFooterText || '',
+                    logoUrl: data.logoUrl || '',
+                    companyInceptionDate: data.companyInceptionDate || '',
+                    fyStartMonth: data.fyStartMonth || '',
+                    fyStartDay: data.fyStartDay || ''
+                };
+                console.log('Settings to display:', loadedSettings);
+                setSettings(loadedSettings);
+            }
+        } catch (error) {
+            console.error('Error loading company settings:', error);
+            alert('Failed to load company settings');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleChange = (e) => {
+        const { name, value } = e.target;
+        setSettings(prev => ({
+            ...prev,
+            [name]: value
+        }));
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        try {
+            setSaving(true);
+            console.log('Submitting company settings:', settings);
+            const result = await updateCompanySettings(settings);
+            console.log('Update result:', result);
+            alert('Company settings saved successfully!');
+        } catch (error) {
+            console.error('Error saving company settings:', error);
+            alert('Failed to save company settings');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    if (loading) {
+        return (
+            <div className="loading-container">
+                <div className="spinner"></div>
+                <div className="loading-text">Loading company settings...</div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="company-details">
+            <div className="page-header">
+                <h1>Company Details</h1>
+            </div>
+
+            <form onSubmit={handleSubmit} className="entity-form">
+                <h2>Company Information</h2>
+                <div className="form-row">
+                    <div className="form-group">
+                        <label>Company Inception Date</label>
+                        <input
+                            type="date"
+                            name="companyInceptionDate"
+                            value={settings.companyInceptionDate ? new Date(settings.companyInceptionDate).toISOString().split('T')[0] : ''}
+                            onChange={handleChange}
+                        />
+                        <small style={{color: '#666', fontSize: '0.85rem'}}>The date your company was established</small>
+                    </div>
+                </div>
+
+                <h3 style={{marginTop: '2rem', marginBottom: '1rem', borderBottom: '1px solid #ddd', paddingBottom: '0.5rem'}}>Financial Year Settings</h3>
+                <div style={{marginBottom: '1rem', padding: '0.75rem', backgroundColor: '#e7f3ff', borderRadius: '4px', fontSize: '0.9rem'}}>
+                    <strong>ℹ️ Note:</strong> If left blank, your FY will default to your Company Inception Date above. Only fill these in if your FY starts on a different date (e.g., UK tax year: April 6).
+                </div>
+                <div className="form-row">
+                    <div className="form-group">
+                        <label>FY Start Month (1-12) - Optional</label>
+                        <input
+                            type="number"
+                            name="fyStartMonth"
+                            min="1"
+                            max="12"
+                            value={settings.fyStartMonth || ''}
+                            onChange={handleChange}
+                            placeholder="Leave blank to use inception date"
+                        />
+                        <small style={{color: '#666', fontSize: '0.85rem'}}>Override FY start month (1=Jan, 4=Apr, etc.)</small>
+                    </div>
+                    <div className="form-group">
+                        <label>FY Start Day (1-31) - Optional</label>
+                        <input
+                            type="number"
+                            name="fyStartDay"
+                            min="1"
+                            max="31"
+                            value={settings.fyStartDay || ''}
+                            onChange={handleChange}
+                            placeholder="Leave blank to use inception date"
+                        />
+                        <small style={{color: '#666', fontSize: '0.85rem'}}>Override FY start day of month</small>
+                    </div>
+                </div>
+
+                <h2 style={{marginTop: '2rem'}}>Company Details</h2>
+                <div className="form-row">
+                    <div className="form-group">
+                        <label>Company Name *</label>
+                        <input
+                            type="text"
+                            name="companyName"
+                            value={settings.companyName}
+                            onChange={handleChange}
+                            required
+                        />
+                    </div>
+                    <div className="form-group">
+                        <label>Registration Number</label>
+                        <input
+                            type="text"
+                            name="companyRegistrationNumber"
+                            value={settings.companyRegistrationNumber}
+                            onChange={handleChange}
+                        />
+                    </div>
+                </div>
+
+                <div className="form-row">
+                    <div className="form-group">
+                        <label>Company Address</label>
+                        <textarea
+                            name="companyAddress"
+                            value={settings.companyAddress}
+                            onChange={handleChange}
+                            rows="3"
+                        />
+                    </div>
+                </div>
+
+                <div className="form-row">
+                    <div className="form-group">
+                        <label>Phone</label>
+                        <input
+                            type="tel"
+                            name="companyPhone"
+                            value={settings.companyPhone}
+                            onChange={handleChange}
+                        />
+                    </div>
+                    <div className="form-group">
+                        <label>Email</label>
+                        <input
+                            type="email"
+                            name="companyEmail"
+                            value={settings.companyEmail}
+                            onChange={handleChange}
+                        />
+                    </div>
+                </div>
+
+                <h2>Shared Mailboxes</h2>
+                <div className="form-row">
+                    <div className="form-group">
+                        <label>Invoices Mailbox</label>
+                        <input
+                            type="email"
+                            name="invoicesEmail"
+                            value={settings.invoicesEmail}
+                            onChange={handleChange}
+                            placeholder="invoices@domain.com"
+                        />
+                        <small style={{color: '#666', fontSize: '0.85rem'}}>Email address for sending invoices</small>
+                    </div>
+                    <div className="form-group">
+                        <label>Quotes Mailbox</label>
+                        <input
+                            type="email"
+                            name="quotesEmail"
+                            value={settings.quotesEmail}
+                            onChange={handleChange}
+                            placeholder="quotes@domain.com"
+                        />
+                        <small style={{color: '#666', fontSize: '0.85rem'}}>Email address for sending quotes</small>
+                    </div>
+                </div>
+
+                <div className="form-row">
+                    <div className="form-group">
+                        <label>Payments Mailbox</label>
+                        <input
+                            type="email"
+                            name="paymentsEmail"
+                            value={settings.paymentsEmail}
+                            onChange={handleChange}
+                            placeholder="payments@domain.com"
+                        />
+                        <small style={{color: '#666', fontSize: '0.85rem'}}>Contact email for payment queries</small>
+                    </div>
+                </div>
+
+                <h2>Tax & Banking</h2>
+                <div className="form-row">
+                    <div className="form-group">
+                        <label>Tax Registration Number</label>
+                        <input
+                            type="text"
+                            name="taxRegistrationNumber"
+                            value={settings.taxRegistrationNumber}
+                            onChange={handleChange}
+                        />
+                    </div>
+                    <div className="form-group">
+                        <label>VAT Registration Number</label>
+                        <input
+                            type="text"
+                            name="vatRegistrationNumber"
+                            value={settings.vatRegistrationNumber}
+                            onChange={handleChange}
+                        />
+                    </div>
+                </div>
+
+                <div className="form-row">
+                    <div className="form-group">
+                        <label>Bank Name</label>
+                        <input
+                            type="text"
+                            name="bankName"
+                            value={settings.bankName}
+                            onChange={handleChange}
+                        />
+                    </div>
+                    <div className="form-group">
+                        <label>Bank Account Number</label>
+                        <input
+                            type="text"
+                            name="bankAccountNumber"
+                            value={settings.bankAccountNumber}
+                            onChange={handleChange}
+                        />
+                    </div>
+                </div>
+
+                <div className="form-row">
+                    <div className="form-group">
+                        <label>Bank Sort Code</label>
+                        <input
+                            type="text"
+                            name="bankSortCode"
+                            value={settings.bankSortCode}
+                            onChange={handleChange}
+                            placeholder="00-00-00"
+                        />
+                    </div>
+                    <div className="form-group">
+                        <label>Default Currency</label>
+                        <select
+                            name="defaultCurrency"
+                            value={settings.defaultCurrency}
+                            onChange={handleChange}
+                        >
+                            <option value="GBP">GBP (£)</option>
+                            <option value="USD">USD ($)</option>
+                            <option value="EUR">EUR (€)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <h2>Invoice & Quote Settings</h2>
+                <div className="form-row">
+                    <div className="form-group">
+                        <label>Invoice Prefix</label>
+                        <input
+                            type="text"
+                            name="invoicePrefix"
+                            value={settings.invoicePrefix}
+                            onChange={handleChange}
+                            placeholder="INV"
+                        />
+                    </div>
+                    <div className="form-group">
+                        <label>Quote Prefix</label>
+                        <input
+                            type="text"
+                            name="quotePrefix"
+                            value={settings.quotePrefix}
+                            onChange={handleChange}
+                            placeholder="QUO"
+                        />
+                    </div>
+                </div>
+
+                <div className="form-row">
+                    <div className="form-group">
+                        <label>Default VAT Rate (%)</label>
+                        <input
+                            type="number"
+                            name="defaultVATRate"
+                            value={settings.defaultVATRate}
+                            onChange={handleChange}
+                            min="0"
+                            max="100"
+                        />
+                    </div>
+                    <div className="form-group">
+                        <label>Invoice Payment Terms (Days)</label>
+                        <input
+                            type="number"
+                            name="invoiceTermsDays"
+                            value={settings.invoiceTermsDays}
+                            onChange={handleChange}
+                            min="0"
+                        />
+                    </div>
+                </div>
+
+                <div className="form-row">
+                    <div className="form-group">
+                        <label>Invoice Footer Text</label>
+                        <textarea
+                            name="invoiceFooterText"
+                            value={settings.invoiceFooterText}
+                            onChange={handleChange}
+                            rows="3"
+                            placeholder="Payment terms, late payment fees, etc."
+                        />
+                    </div>
+                </div>
+
+                <div className="form-row">
+                    <div className="form-group">
+                        <label>Company Logo URL</label>
+                        <input
+                            type="url"
+                            name="logoUrl"
+                            value={settings.logoUrl}
+                            onChange={handleChange}
+                            placeholder="https://..."
+                        />
+                    </div>
+                </div>
+
+                <button type="submit" className="btn-primary" disabled={saving}>
+                    {saving ? 'Saving...' : 'Save Company Settings'}
+                </button>
+            </form>
+        </div>
+    );
+};
+
+export default CompanyDetails;

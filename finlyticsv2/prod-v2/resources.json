@@ -1,0 +1,35 @@
+{
+  "environment": "prod-v2",
+  "subscription": {
+    "name": "M365 Sponsorship",
+    "id": "14c59cbb-564e-4700-b574-a2ef4e07c1a1"
+  },
+  "resourceGroup": "rg-finlytics-prod",
+  "location": "westeurope",
+  "app": {
+    "url": "https://app.finlytics.co.uk",
+    "staticWebApp": {
+      "name": "finlyticsprodswa"
+    },
+    "functionApp": {
+      "name": "finlyticsprodfunc",
+      "apiBase": "https://finlyticsprodfunc.azurewebsites.net/api"
+    }
+  },
+  "data": {
+    "sql": {
+      "server": "finlyticsprodsql.database.windows.net",
+      "database": "finlyticsproddbclone"
+    },
+    "storage": {
+      "account": "stfinlyticsprod01"
+    }
+  },
+  "status": {
+    "frontendDeployed": true,
+    "backendDeployed": true,
+    "customDomainReady": true,
+    "corsConfigured": true
+  },
+  "lastValidatedUtc": "2026-06-18T00:00:00Z"
+}

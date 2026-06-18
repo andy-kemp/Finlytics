@@ -37,7 +37,7 @@ const CategorizationRules = lazy(() => import('./components/CategorizationRules'
 const GoCardlessPayments = lazy(() => import('./components/GoCardlessPayments'));
 const Bills = lazy(() => import('./components/Bills'));
 
-const API_BASE = 'https://financehub-func-kemponline.azurewebsites.net/api';
+const API_BASE = import.meta.env.VITE_API_BASE || 'https://financehub-func-kemponline.azurewebsites.net/api';
 
 // Fire the health ping immediately on script load — don't wait for MSAL init.
 // This starts the cold-start process as early as possible.

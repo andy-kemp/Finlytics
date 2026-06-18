@@ -1,0 +1,93 @@
+name: finlyticsv2-deploy-prod
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-prod:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Preview infrastructure changes (what-if)
+        run: |
+          az deployment group what-if \
+            --resource-group rg-finlytics-prod \
+            --template-file finlyticsv2/infra/bicep/main.bicep \
+            --parameters finlyticsv2/infra/bicep/prod.bicepparam \
+            --parameters sqlAdminPassword='${{ secrets.FINLYTICSV2_SQL_ADMIN_PASSWORD_PROD }}'
+
+      - name: Deploy infrastructure
+        run: |
+          az deployment group create \
+            --resource-group rg-finlytics-prod \
+            --template-file finlyticsv2/infra/bicep/main.bicep \
+            --parameters finlyticsv2/infra/bicep/prod.bicepparam \
+            --parameters sqlAdminPassword='${{ secrets.FINLYTICSV2_SQL_ADMIN_PASSWORD_PROD }}' \
+            --query properties.outputs > infra-outputs.json
+
+      - name: Capture infra outputs
+        id: infra
+        shell: bash
+        run: |
+          echo "function_app_name=$(jq -r '.names.value.functionAppName' infra-outputs.json)" >> "$GITHUB_OUTPUT"
+          echo "static_web_app_name=$(jq -r '.names.value.staticWebAppName' infra-outputs.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish API
+        working-directory: finlyticsv2/api
+        run: dotnet publish --configuration Release --output ./publish
+
+      - name: Deploy API package
+        run: |
+          cd finlyticsv2/api/publish
+          zip -r ../../../finlyticsv2-api.zip .
+          cd ../../../
+          az functionapp deployment source config-zip \
+            --resource-group rg-finlytics-prod \
+            --name '${{ steps.infra.outputs.function_app_name }}' \
+            --src finlyticsv2-api.zip
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build frontend
+        working-directory: finlyticsv2/app
+        run: |
+          npm ci
+          npm run build
+
+      - name: Fetch SWA deployment token
+        id: swa
+        shell: bash
+        run: |
+          token=$(az staticwebapp secrets list --name '${{ steps.infra.outputs.static_web_app_name }}' --query properties.apiKey -o tsv)
+          echo "deployment_token=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy frontend to Static Web App
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ steps.swa.outputs.deployment_token }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          app_location: finlyticsv2/app/dist
+          skip_app_build: true
+          skip_api_build: true

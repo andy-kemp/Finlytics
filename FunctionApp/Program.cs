@@ -1,4 +1,5 @@
-﻿using System;
+﻿﻿#nullable enable
+using System;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Azure.Identity;
@@ -168,9 +169,14 @@ var host = new HostBuilder()
         services.AddScoped<CreditNotePdfService>();
         services.AddSingleton<ClerkAuthService>();
         var storageConnectionString = context.Configuration["AzureWebJobsStorage"];
+        var storageBlobServiceUri = context.Configuration["AzureWebJobsStorage__blobServiceUri"];
         if (!string.IsNullOrEmpty(storageConnectionString))
         {
             services.AddSingleton(new BlobStorageService(storageConnectionString));
+        }
+        else if (!string.IsNullOrEmpty(storageBlobServiceUri))
+        {
+            services.AddSingleton(new BlobStorageService(new Uri(storageBlobServiceUri), new DefaultAzureCredential()));
         }
     })
     .Build();

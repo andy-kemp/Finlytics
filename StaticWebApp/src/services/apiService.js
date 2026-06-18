@@ -1,6 +1,6 @@
 import { msalInstance, loginRequest } from '../auth/authConfig';
 
-const API_BASE = 'https://financehub-func-kemponline.azurewebsites.net/api';
+const API_BASE = import.meta.env.VITE_API_BASE || 'https://financehub-func-kemponline.azurewebsites.net/api';
 
 // In-flight token promise cache — if multiple calls fire simultaneously, they all
 // share the same acquireTokenSilent promise instead of each making their own request.
@@ -243,6 +243,10 @@ export async function getExpenses({ companyOnly = false } = {}) {
     
     const data = await response.json();
     console.log('getExpenses: Raw data received:', data);
+    if (data && !Array.isArray(data) && typeof data === 'object' && data.error) {
+        console.error('getExpenses: API returned error payload:', data.error);
+        return [];
+    }
     
     // Convert PascalCase properties to camelCase for JavaScript
     const convertedData = Array.isArray(data) ? data.map(expense => {
@@ -282,7 +286,7 @@ export async function getExpenses({ companyOnly = false } = {}) {
             approvalStatus: expense.approvalStatus || expense.ApprovalStatus || null,
             submittedByTeamMemberId: expense.submittedByTeamMemberId ?? expense.SubmittedByTeamMemberId ?? null
         };
-    }) : data;
+    }) : [];
     
     console.log('getExpenses: Converted data:', convertedData);
     if (convertedData.length > 0) {
@@ -441,10 +445,14 @@ export async function getCompanySettings() {
     }
     const data = await response.json();
     console.log('GetCompanySettings raw data from API:', data);
+    if (data && typeof data === 'object' && data.error) {
+        console.error('GetCompanySettings returned error payload:', data.error);
+        return null;
+    }
     
     // API already returns camelCase due to JsonNamingPolicy.CamelCase in Program.cs - just return it!
-    console.log('Returning company settings with companyName:', data.companyName);
-    return data;
+    console.log('Returning company settings with companyName:', data?.companyName);
+    return data ?? null;
 }
 
 export async function testSmtpConfiguration(email) {

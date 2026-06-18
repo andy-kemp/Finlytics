@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "dev"
+    },
+    "location": {
+      "value": "westeurope"
+    },
+    "namePrefix": {
+      "value": "finlytics"
+    },
+    "staticWebAppSku": {
+      "value": "Free"
+    },
+    "functionPlanSku": {
+      "value": "Y1"
+    },
+    "sqlAdminLogin": {
+      "value": "finlyticsdevadmin"
+    },
+    "sqlAdminPassword": {
+      "value": "SET_BY_PIPELINE_SECRET"
+    },
+    "sqlAutoPauseDelay": {
+      "value": 60
+    },
+    "sqlMinCapacity": {
+      "value": 1
+    },
+    "enablePrivateEndpoints": {
+      "value": false
+    },
+    "createSqlAllowAzureServicesRule": {
+      "value": false
+    },
+    "staticWebAppLocation": {
+      "value": "westeurope"
+    }
+  }
+}

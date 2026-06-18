@@ -1,0 +1,14 @@
+name: finlyticsv2 deploy prod
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-production:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy prod
+        run: echo "Deploy approved release to production"

@@ -1,0 +1,59 @@
+name: finlyticsv2-validate
+
+on:
+  pull_request:
+    paths:
+      - 'finlyticsv2/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'finlyticsv2/**'
+
+jobs:
+  validate-app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install app dependencies
+        working-directory: finlyticsv2/app
+        run: npm ci
+
+      - name: Build app
+        working-directory: finlyticsv2/app
+        run: npm run build
+
+  validate-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore API dependencies
+        working-directory: finlyticsv2/api
+        run: dotnet restore
+
+      - name: Build API
+        working-directory: finlyticsv2/api
+        run: dotnet build --configuration Release --no-restore
+
+  validate-infra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate dev bicep params
+        run: az bicep build-params --file finlyticsv2/infra/bicep/dev.bicepparam
+
+      - name: Validate prod bicep params
+        run: az bicep build-params --file finlyticsv2/infra/bicep/prod.bicepparam

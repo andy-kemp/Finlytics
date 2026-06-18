@@ -1,0 +1,90 @@
+
+; Exported zone file from Azure DNS
+;      Zone name: andykemp.cloud
+;      Resource Group Name: DNS_Zones
+;      Date and time (UTC): Tue, 16 Jun 2026 09:51:58 +0100
+
+$TTL 300
+$ORIGIN andykemp.cloud.
+    
+@ 3600 IN SOA ns1-06.azure-dns.com. azuredns-hostmaster.microsoft.com. (
+              1 ; serial
+              3600 ; refresh
+              300 ; retry
+              2419200 ; expire
+              300 ; minimum
+              )
+
+  172800 IN NS ns1-06.azure-dns.com.
+  172800 IN NS ns2-06.azure-dns.net.
+  172800 IN NS ns3-06.azure-dns.org.
+  172800 IN NS ns4-06.azure-dns.info.
+
+  3600 IN TXT "_jfv0uc9lru5ollzjkgqxa7vd2blv253"
+
+_dmarc 3600 IN TXT "v=DMARC1; p=none;"
+
+s1._domainkey 3600 IN CNAME s1.domainkey.u30994447.wl198.sendgrid.net.
+
+s2._domainkey 3600 IN CNAME s2.domainkey.u30994447.wl198.sendgrid.net.
+
+s506257._domainkey 3600 IN CNAME dkim.smtp2go.net.
+
+azure 3600 IN A 20.162.199.128
+
+azure1 3600 IN CNAME ssazure1.uksouth.cloudapp.azure.com.
+
+devgenie 3600 IN CNAME ip.andykemp.cloud.
+
+em3712 3600 IN CNAME u30994447.wl198.sendgrid.net.
+
+em506257 3600 IN CNAME return.smtp2go.net.
+
+esw 3600 IN A 20.162.163.94
+
+finhub 3600 IN CNAME zealous-desert-06b17b603.2.azurestaticapps.net.
+
+flow 3600 IN CNAME orange-coast-04d2c7403.6.azurestaticapps.net.
+
+go 3600 IN A 20.0.147.202
+
+home 3600 IN A 86.178.203.38
+
+intervaly 3600 IN CNAME witty-glacier-023a67a03.1.azurestaticapps.net.
+
+ip 300 IN A 86.159.18.145
+
+ipsec 3600 IN CNAME ak-ipsec.uksouth.cloudapp.azure.com.
+
+last 3600 IN CNAME www.andykemp.cloud.
+
+link 3600 IN CNAME track.smtp2go.net.
+
+mct-ss 3600 IN A 172.167.175.44
+
+media 3600 IN CNAME ip.andykemp.cloud.
+
+app.media 3600 IN CNAME ip.andykemp.cloud.
+
+panel 3600 IN CNAME ip.andykemp.cloud.
+
+site 3600 IN CNAME ip.andykemp.cloud.
+
+ss-azure1 3600 IN CNAME ssazure1.uksouth.cloudapp.azure.com.
+
+ss1 3600 IN CNAME ip.andykemp.cloud.
+
+ss2 3600 IN A 172.167.99.186
+
+test 3600 IN CNAME www.andykemp.cloud.
+
+test2 3600 IN CNAME www.andykemp.cloud.
+
+test3 3600 IN CNAME www.andykemp.cloud.
+
+vpn 3600 IN CNAME ip.andykemp.cloud.
+
+vpn1 3600 IN CNAME ip.andykemp.cloud.
+
+www 3600 IN CNAME prometheus.uksouth.cloudapp.azure.com.
+
