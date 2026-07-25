@@ -185,11 +185,17 @@ export default function VatReturns() {
                 ? new Date(settings.companyInceptionDate)
                 : null;
 
+        // Use the same lower-bound priority as displayQuarters filter so that
+        // isOldestDisplayedQuarter matches what's actually shown on screen.
+        const displayLowerBound = settings?.vatEffectiveDate
+            ? new Date(settings.vatEffectiveDate)
+            : inceptionDate;
+
         // Is this the oldest displayed quarter?
-        // Check whether the previous quarter (3 months earlier) would pass the inception-date
-        // filter. If it wouldn't, this quarter is the first visible one.
+        // Check whether the previous quarter (3 months earlier) would pass the display filter.
+        // If it wouldn't, this quarter is the first visible one.
         const prevQuarterStart = new Date(start.getFullYear(), start.getMonth() - 3, 1);
-        const prevWouldShow = inceptionDate ? prevQuarterStart >= inceptionDate : true;
+        const prevWouldShow = displayLowerBound ? prevQuarterStart >= displayLowerBound : true;
         const isOldestDisplayedQuarter = !prevWouldShow;
 
         // VAT accounting method: 'invoice' = count by issue date; default (cash) = count by payment date.
