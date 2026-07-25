@@ -235,8 +235,9 @@ export default function VatReturns() {
             return (d >= start && d <= end) ? sum + e.net : sum;
         }, 0);
 
-        const box6 = netSales;
-        const box7 = netPurchases;
+        // Boxes 6-9: HMRC requires whole pounds only (no pence) — round to nearest £
+        const box6 = Math.round(netSales);
+        const box7 = Math.round(netPurchases);
         const box8 = 0;
         const box9 = 0;
 
@@ -254,10 +255,10 @@ export default function VatReturns() {
             ['Box 3', 'Total VAT due (Box 1 + Box 2)', box3.toFixed(2)],
             ['Box 4', 'VAT reclaimed on purchases and other inputs', box4.toFixed(2)],
             ['Box 5', 'Net VAT to pay HMRC / reclaim (Box 3 minus Box 4)', box5.toFixed(2)],
-            ['Box 6', 'Total value of sales excluding VAT', box6.toFixed(2)],
-            ['Box 7', 'Total value of purchases excluding VAT', box7.toFixed(2)],
-            ['Box 8', 'Total value of EC supplies of goods (ex VAT)', box8.toFixed(2)],
-            ['Box 9', 'Total value of EC acquisitions of goods (ex VAT)', box9.toFixed(2)],
+            ['Box 6', 'Total value of sales excluding VAT (whole pounds)', box6.toString()],
+            ['Box 7', 'Total value of purchases excluding VAT (whole pounds)', box7.toString()],
+            ['Box 8', 'Total value of EC supplies of goods (ex VAT, whole pounds)', box8.toString()],
+            ['Box 9', 'Total value of EC acquisitions of goods (ex VAT, whole pounds)', box9.toString()],
         ];
         const summaryCsv = summaryRows.map(r => r.map(csvCell).join(',')).join('\r\n');
         downloadFile(`VAT-Return-${label}-Summary.csv`, summaryCsv);
