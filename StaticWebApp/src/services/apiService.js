@@ -1431,6 +1431,16 @@ export async function createReconciliationMatch(match) {
     return response.json();
 }
 
+export async function autoReconcileTransactions() {
+    const headers = await getAuthHeaders();
+    const response = await fetch(`${API_BASE}/reconciliation/auto-match`, {
+        method: 'POST',
+        headers
+    });
+    if (!response.ok) throw new Error('Failed to auto reconcile transactions');
+    return response.json();
+}
+
 export async function getReconciliationRules() {
     const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE}/reconciliation/rules`, { headers });
