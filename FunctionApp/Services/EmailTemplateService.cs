@@ -86,8 +86,16 @@ namespace FinanceHubFunctions.Services
                 <div class='highlight'>
                     <table class='summary-table'>
                         <tr>
-                            <td class='label'>Invoice Amount</td>
-                            <td class='value'>{{CURRENCY_SYMBOL}}{{INVOICE_TOTAL}}</td>
+                            <td class='label'>Net Amount</td>
+                            <td class='value'>{{CURRENCY_SYMBOL}}{{INVOICE_NET}}</td>
+                        </tr>
+                        <tr>
+                            <td class='label'>VAT</td>
+                            <td class='value'>{{CURRENCY_SYMBOL}}{{INVOICE_VAT}}</td>
+                        </tr>
+                        <tr>
+                            <td class='label'>Gross Amount</td>
+                            <td class='value'><strong>{{CURRENCY_SYMBOL}}{{INVOICE_GROSS}}</strong></td>
                         </tr>
                         <tr>
                             <td class='label'>Due Date</td>
@@ -119,8 +127,16 @@ namespace FinanceHubFunctions.Services
                             <td class='value'>{{INVOICE_DATE}}</td>
                         </tr>
                         <tr>
+                            <td class='label'>Net Amount</td>
+                            <td class='value'>{{CURRENCY_SYMBOL}}{{INVOICE_NET}}</td>
+                        </tr>
+                        <tr>
+                            <td class='label'>VAT</td>
+                            <td class='value'>{{CURRENCY_SYMBOL}}{{INVOICE_VAT}}</td>
+                        </tr>
+                        <tr>
                             <td class='label'>Amount Due</td>
-                            <td class='value' style='color:#b91c1c;font-size:16px;'>{{CURRENCY_SYMBOL}}{{INVOICE_TOTAL}}</td>
+                            <td class='value' style='color:#b91c1c;font-size:16px;'>{{CURRENCY_SYMBOL}}{{INVOICE_GROSS}}</td>
                         </tr>
                         <tr>
                             <td class='label'>Due Date</td>

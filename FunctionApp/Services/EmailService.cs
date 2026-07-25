@@ -193,9 +193,26 @@ namespace FinanceHubFunctions.Services
                     return new EmailSendResult(false, "SMTP from address or username not configured");
                 }
 
-                // Get SMTP password from Key Vault
+                // Get SMTP password from Key Vault first.
+                // If this is a migrated environment and the secret was not copied yet,
+                // fall back to any DB value and rehydrate Key Vault automatically.
                 var smtpPassword = await _keyVaultService.GetSmtpPasswordAsync();
-                
+
+                if (string.IsNullOrEmpty(smtpPassword) && !string.IsNullOrWhiteSpace(companySettings.SmtpPassword))
+                {
+                    smtpPassword = companySettings.SmtpPassword;
+                    _logger.LogWarning("SMTP password missing in Key Vault; using CompanySettings fallback and attempting Key Vault rehydrate");
+                    try
+                    {
+                        await _keyVaultService.SetSmtpPasswordAsync(smtpPassword);
+                        _logger.LogInformation("SMTP password rehydrated into Key Vault from CompanySettings fallback");
+                    }
+                    catch (Exception kvEx)
+                    {
+                        _logger.LogWarning(kvEx, "Failed to rehydrate SMTP password into Key Vault from CompanySettings fallback");
+                    }
+                }
+
                 if (string.IsNullOrEmpty(smtpPassword))
                 {
                     _logger.LogError("SMTP password not found in Key Vault");
@@ -405,6 +422,9 @@ namespace FinanceHubFunctions.Services
                 ["CUSTOMER_NAME"] = invoice.CustomerName ?? "Customer",
                 ["INVOICE_NUMBER"] = invoice.InvoiceNumber ?? "",
                 ["INVOICE_DATE"] = invoice.DateIssued.ToString("dd MMM yyyy"),
+                ["INVOICE_NET"] = invoice.AmountNet.ToString("N2"),
+                ["INVOICE_VAT"] = invoice.VATAmount.ToString("N2"),
+                ["INVOICE_GROSS"] = invoice.AmountGross.ToString("N2"),
                 ["INVOICE_TOTAL"] = invoice.AmountGross.ToString("N2"),
                 ["CURRENCY_SYMBOL"] = currencySymbol,
                 ["DUE_DATE"] = invoice.DueDate?.ToString("dd MMM yyyy") ?? "",
@@ -461,6 +481,9 @@ namespace FinanceHubFunctions.Services
                 ["CUSTOMER_NAME"] = invoice.CustomerName ?? "Customer",
                 ["INVOICE_NUMBER"] = invoice.InvoiceNumber ?? "",
                 ["INVOICE_DATE"] = invoice.DateIssued.ToString("dd MMM yyyy"),
+                ["INVOICE_NET"] = invoice.AmountNet.ToString("N2"),
+                ["INVOICE_VAT"] = invoice.VATAmount.ToString("N2"),
+                ["INVOICE_GROSS"] = invoice.AmountGross.ToString("N2"),
                 ["INVOICE_TOTAL"] = invoice.AmountGross.ToString("N2"),
                 ["CURRENCY_SYMBOL"] = currencySymbol,
                 ["DUE_DATE"] = invoice.DueDate?.ToString("dd MMM yyyy") ?? "",
