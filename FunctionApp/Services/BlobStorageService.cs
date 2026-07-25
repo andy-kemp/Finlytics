@@ -327,6 +327,35 @@ namespace FinanceHubFunctions.Services
             return blobClient.Uri.ToString();
         }
 
+        private const string VatConfirmationsContainer = "vat-confirmations";
+
+        public async Task<string> UploadVatConfirmationAsync(int vatReturnId, string quarterLabel, byte[] fileContent, string fileName)
+        {
+            var containerClient = _blobServiceClient.GetBlobContainerClient(VatConfirmationsContainer);
+            await containerClient.CreateIfNotExistsAsync(PublicAccessType.None);
+
+            var timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+            var sanitized = string.Join("_", fileName.Split(Path.GetInvalidFileNameChars()));
+            var safeQuarter = string.Join("-", quarterLabel.Split(Path.GetInvalidFileNameChars())).Replace(" ", "-").Replace("/", "-");
+            var blobName = $"{safeQuarter}/{timestamp}_{sanitized}";
+            var blobClient = containerClient.GetBlobClient(blobName);
+
+            using var stream = new MemoryStream(fileContent);
+            await blobClient.UploadAsync(stream, new BlobUploadOptions
+            {
+                Metadata = new Dictionary<string, string>
+                {
+                    { "VatReturnId", vatReturnId.ToString() },
+                    { "QuarterLabel", quarterLabel },
+                    { "OriginalFileName", fileName },
+                    { "UploadDate", DateTime.UtcNow.ToString("O") }
+                },
+                HttpHeaders = new BlobHttpHeaders { ContentType = GetContentType(fileName) }
+            });
+
+            return blobClient.Uri.ToString();
+        }
+
         private string GetContentType(string fileName)
         {
             var extension = Path.GetExtension(fileName).ToLowerInvariant();

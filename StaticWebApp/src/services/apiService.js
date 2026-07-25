@@ -1915,6 +1915,23 @@ export async function deleteVatReturn(id) {
     }
     return response.text();
 }
+
+export async function uploadVatConfirmationPdf(id, file) {
+    const headers = await getAuthHeaders();
+    // Send as raw binary with filename in header (avoids multipart complexity)
+    headers['Content-Type'] = 'application/pdf';
+    headers['X-File-Name'] = encodeURIComponent(file.name);
+    const response = await fetch(`${API_BASE}/vat-returns/${id}/confirmation-pdf`, {
+        method: 'POST',
+        headers,
+        body: file
+    });
+    if (!response.ok) {
+        const text = await response.text().catch(() => 'Unknown error');
+        throw new Error(text || 'Failed to upload confirmation PDF');
+    }
+    return response.json();
+}
 // ── Invoice OCR ───────────────────────────────────────────────────────────────
 // Returns: { configured, found, vendor, invoiceDate, invoiceRef, lines[] }
 // Lines: { description, amountNet, vatAmount, amountGross }

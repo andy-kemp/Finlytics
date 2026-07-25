@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
     getVatReturns,
     createVatReturn,
     updateVatReturn,
     deleteVatReturn,
+    uploadVatConfirmationPdf,
     getInvoices,
     getExpenses,
     getCompanySettings,
@@ -102,6 +103,14 @@ export default function VatReturns() {
     const [editSubmitting, setEditSubmitting] = useState(false);
 
     const [showAllYears, setShowAllYears] = useState(false);
+
+    // PDF confirmation upload state
+    const [pdfModal, setPdfModal]               = useState(null); // { quarter, filed } or null
+    const [pdfFile, setPdfFile]                 = useState(null); // File object
+    const [pdfRef, setPdfRef]                   = useState('');
+    const [pdfDate, setPdfDate]                 = useState('');
+    const [pdfUploading, setPdfUploading]       = useState(false);
+    const pdfInputRef                           = useRef(null);
 
     // ── HMRC MTD state ────────────────────────────────────────────────────────
     const [hmrcConnected, setHmrcConnected]     = useState(false);
@@ -541,6 +550,51 @@ export default function VatReturns() {
         setFilingDate(new Date().toISOString().slice(0, 10));
         setFilingNotes('');
         setShowFileModal(true);
+    };
+
+    const openPdfModal = (q, filed) => {
+        setPdfModal({ quarter: q, filed });
+        setPdfFile(null);
+        setPdfRef(filed?.reference || '');
+        setPdfDate(new Date().toISOString().slice(0, 10));
+        setPdfUploading(false);
+        // If no current filed record, also pre-fill filing details via openFileModal-like logic
+    };
+
+    const handlePdfUpload = async () => {
+        if (!pdfModal || !pdfFile) return;
+        setPdfUploading(true);
+        try {
+            const { quarter, filed } = pdfModal;
+
+            let vatReturnId = filed?.id;
+
+            if (!vatReturnId) {
+                // Not yet filed — create the filed record first
+                const calc = calcForQuarter(quarter);
+                const created = await createVatReturn({
+                    quarterLabel:     quarter.quarterLabel,
+                    monthsLabel:      quarter.monthsLabel,
+                    quarterStartDate: quarter.quarterStartDate,
+                    quarterEndDate:   quarter.quarterEndDate,
+                    vatIn:            calc.vatIn,
+                    vatOut:           calc.vatOut,
+                    vatOwed:          calc.vatOwed,
+                    filedDate:        pdfDate ? new Date(pdfDate).toISOString() : new Date().toISOString(),
+                    reference:        pdfRef
+                });
+                vatReturnId = created.id;
+            }
+
+            await uploadVatConfirmationPdf(vatReturnId, pdfFile);
+            await loadData();
+            setPdfModal(null);
+            showToast(`Confirmation PDF uploaded and quarter marked as filed.`);
+        } catch (err) {
+            showToast(`Upload failed: ${err.message}`, 'error');
+        } finally {
+            setPdfUploading(false);
+        }
     };
 
     const submitFiling = async () => {
@@ -1226,6 +1280,23 @@ export default function VatReturns() {
                                                             className="btn-icon btn-danger"
                                                             title="Unfile this quarter"
                                                         >↩️</button>
+                                                        {filed.confirmationPdfUrl ? (
+                                                            <a
+                                                                href={filed.confirmationPdfUrl}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="btn-icon"
+                                                                title="View HMRC submission confirmation PDF"
+                                                                style={{ background: '#fff3e0', border: '1px solid #fb8c00', color: '#e65100', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                                                            >📎</a>
+                                                        ) : (
+                                                            <button
+                                                                onClick={() => openPdfModal(q, filed)}
+                                                                className="btn-icon"
+                                                                title="Upload HMRC submission confirmation PDF"
+                                                                style={{ background: '#fff3e0', border: '1px solid #fb8c00', color: '#e65100' }}
+                                                            >📎</button>
+                                                        )}
                                                         {verifyPeriodKey && (
                                                             <button
                                                                 onClick={() => {
@@ -1276,6 +1347,14 @@ export default function VatReturns() {
                                                         title="Export VAT return to CSV (VAT100 summary + transactions)"
                                                     >
                                                         📥 Export CSV
+                                                    </button>
+                                                    <button
+                                                        onClick={() => openPdfModal(q, null)}
+                                                        className="btn-secondary"
+                                                        style={{ fontSize: '0.82rem', padding: '4px 10px', background: '#fff3e0', border: '1px solid #fb8c00', color: '#e65100' }}
+                                                        title="Upload HMRC confirmation PDF — marks quarter as filed"
+                                                    >
+                                                        📎 Upload & File
                                                     </button>
                                                     <button
                                                         onClick={() => openFileModal(q)}
@@ -1670,6 +1749,84 @@ export default function VatReturns() {
                                 disabled={editSubmitting}
                             >
                                 {editSubmitting ? 'Saving...' : 'Save Changes'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── PDF Confirmation Upload Modal ── */}
+            {pdfModal && (
+                <div className="modal-overlay" onClick={() => setPdfModal(null)}>
+                    <div className="modal-content" style={{ maxWidth: 460 }} onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2>📎 Upload Confirmation PDF — {pdfModal.quarter.quarterLabel}</h2>
+                            <button className="modal-close" onClick={() => setPdfModal(null)}>✕</button>
+                        </div>
+                        <div className="modal-body" style={{ padding: '20px 24px' }}>
+                            <p style={{ color: '#6c757d', marginTop: 0, fontSize: '0.88rem' }}>
+                                {pdfModal.quarter.monthsLabel}
+                            </p>
+                            {!pdfModal.filed && (
+                                <>
+                                    <div style={{ marginBottom: 14 }}>
+                                        <label style={{ fontWeight: 600, display: 'block', marginBottom: 4 }}>Filed Date *</label>
+                                        <input
+                                            type="date"
+                                            className="form-control"
+                                            value={pdfDate}
+                                            onChange={e => setPdfDate(e.target.value)}
+                                        />
+                                    </div>
+                                    <div style={{ marginBottom: 14 }}>
+                                        <label style={{ fontWeight: 600, display: 'block', marginBottom: 4 }}>HMRC Reference</label>
+                                        <input
+                                            type="text"
+                                            className="form-control"
+                                            placeholder="e.g. period key or confirmation ref"
+                                            value={pdfRef}
+                                            onChange={e => setPdfRef(e.target.value)}
+                                        />
+                                    </div>
+                                </>
+                            )}
+                            <div style={{ marginBottom: 14 }}>
+                                <label style={{ fontWeight: 600, display: 'block', marginBottom: 4 }}>Confirmation PDF *</label>
+                                <input
+                                    ref={pdfInputRef}
+                                    type="file"
+                                    accept=".pdf,application/pdf"
+                                    style={{ display: 'none' }}
+                                    onChange={e => setPdfFile(e.target.files?.[0] || null)}
+                                />
+                                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                    <button
+                                        className="btn-secondary"
+                                        onClick={() => pdfInputRef.current?.click()}
+                                        style={{ flexShrink: 0 }}
+                                    >
+                                        Choose PDF
+                                    </button>
+                                    <span style={{ fontSize: '0.85rem', color: pdfFile ? '#333' : '#999', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {pdfFile ? pdfFile.name : 'No file selected'}
+                                    </span>
+                                </div>
+                            </div>
+                            {pdfModal.filed?.confirmationPdfUrl && (
+                                <p style={{ fontSize: '0.83rem', color: '#6c757d' }}>
+                                    Current PDF: <a href={pdfModal.filed.confirmationPdfUrl} target="_blank" rel="noopener noreferrer">View</a> — uploading a new file will replace it.
+                                </p>
+                            )}
+                        </div>
+                        <div className="modal-footer" style={{ gap: 8 }}>
+                            <button className="btn-secondary" onClick={() => setPdfModal(null)}>Cancel</button>
+                            <button
+                                className="btn-primary"
+                                onClick={handlePdfUpload}
+                                disabled={pdfUploading || !pdfFile}
+                                style={{ background: '#fb8c00', borderColor: '#fb8c00' }}
+                            >
+                                {pdfUploading ? 'Uploading...' : '📎 Upload & Mark Filed'}
                             </button>
                         </div>
                     </div>

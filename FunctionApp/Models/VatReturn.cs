@@ -16,6 +16,7 @@ namespace FinanceHubFunctions.Models
         public DateTime? FiledDate { get; set; }
         public string? Reference { get; set; }   // HMRC return reference
         public string? Notes { get; set; }
+        public string? ConfirmationPdfUrl { get; set; } // URL to uploaded submission confirmation PDF
         public DateTime CreatedDate { get; set; }
         public DateTime ModifiedDate { get; set; }
     }
