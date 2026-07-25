@@ -13,17 +13,6 @@
       "statusCode": 200
     }
   },
-  "auth": {
-    "identityProviders": {
-      "azureActiveDirectory": {
-        "registration": {
-          "openIdIssuer": "https://login.microsoftonline.com/11016236-4dbc-43a6-8310-be803173fc43/v2.0",
-          "clientIdSettingName": "AZURE_CLIENT_ID",
-          "clientSecretSettingName": "AZURE_CLIENT_SECRET"
-        }
-      }
-    }
-  },
   "globalHeaders": {
     "Cache-Control": "no-cache, no-store, must-revalidate",
     "Pragma": "no-cache",
