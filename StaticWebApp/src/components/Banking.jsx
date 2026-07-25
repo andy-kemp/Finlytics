@@ -72,6 +72,22 @@ function parseMoney(value) {
     return Number.isFinite(parsed) ? parsed : null;
 }
 
+function parseCsvDate(dateValue, timeValue = '') {
+    const rawDate = String(dateValue || '').trim();
+    const rawTime = String(timeValue || '').trim();
+    if (!rawDate) return null;
+
+    const ukMatch = rawDate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (ukMatch) {
+        const [, day, month, year] = ukMatch;
+        const isoDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+        return rawTime ? `${isoDate}T${rawTime}` : `${isoDate}T00:00:00`;
+    }
+
+    const direct = new Date(rawTime ? `${rawDate} ${rawTime}` : rawDate);
+    return Number.isNaN(direct.getTime()) ? null : direct.toISOString();
+}
+
 function parseCsvTransactions(csvText, bankAccountId) {
     const lines = csvText
         .replace(/^\uFEFF/, '')
@@ -96,7 +112,11 @@ function parseCsvTransactions(csvText, bankAccountId) {
         if (row.every(cell => !String(cell || '').trim())) continue;
 
         const dateValue = pickColumn(row, headerMap, ['date', 'transaction date', 'booking date', 'booked date', 'posted date']);
-        const descriptionValue = pickColumn(row, headerMap, ['description', 'details', 'narrative', 'transaction', 'payee', 'memo']);
+        const timeValue = pickColumn(row, headerMap, ['time', 'transaction time']);
+        const descriptionValue = pickColumn(row, headerMap, ['description', 'details', 'narrative', 'transaction', 'payee', 'memo', 'name', 'merchant']);
+        const notesValue = pickColumn(row, headerMap, ['notes and #tags', 'notes', 'tags']);
+        const typeValue = pickColumn(row, headerMap, ['type']);
+        const categoryValue = pickColumn(row, headerMap, ['category']);
         const referenceValue = pickColumn(row, headerMap, ['reference', 'transaction id', 'id']);
         const balanceValue = pickColumn(row, headerMap, ['balance', 'running balance']);
 
@@ -112,19 +132,26 @@ function parseCsvTransactions(csvText, bankAccountId) {
             else if (debit != null) signedAmount = -Math.abs(debit);
         }
 
-        if (!dateValue || signedAmount == null || !descriptionValue) {
+        const normalizedDate = parseCsvDate(dateValue, timeValue);
+        const normalizedDescription = [descriptionValue, notesValue, typeValue]
+            .map(value => String(value || '').trim())
+            .filter(Boolean)
+            .join(' - ');
+
+        if (!normalizedDate || signedAmount == null || !normalizedDescription) {
             continue;
         }
 
         transactions.push({
             bankAccountId,
-            transactionDate: dateValue,
+            transactionDate: normalizedDate,
             amount: Math.abs(signedAmount),
-            description: descriptionValue,
+            description: normalizedDescription,
             reference: referenceValue || null,
-            category: '',
+            category: categoryValue || '',
             direction: signedAmount >= 0 ? 'In' : 'Out',
             balance: parseMoney(balanceValue),
+            externalId: referenceValue || null,
             source: 'CSV'
         });
     }
