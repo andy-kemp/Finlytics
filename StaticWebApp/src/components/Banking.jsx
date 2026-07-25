@@ -88,6 +88,45 @@ function parseCsvDate(dateValue, timeValue = '') {
     return Number.isNaN(direct.getTime()) ? null : direct.toISOString();
 }
 
+function inferImportedCategory({ description, reference, category, type, signedAmount }) {
+    const text = [description, reference, category, type]
+        .map(value => String(value || '').toLowerCase())
+        .join(' ');
+
+    if (/(^|\W)(dla|dal)(-|\W|\d)/i.test(text) || /director'?s? loan|monzo-to-monzo.*andrew kemp/i.test(text)) {
+        return 'DLA Payment';
+    }
+
+    if (/mileage|fuel|petrol|parking|train|uber|taxi|travel/i.test(text)) {
+        return 'Travel';
+    }
+
+    if (/software|hostinger|domain|hosting|saas|adobe|microsoft|google workspace/i.test(text)) {
+        return 'Software & IT';
+    }
+
+    if (/equipment|ubiquiti|laptop|ipad|monitor|computer|hardware/i.test(text)) {
+        return 'Computer Equipment';
+    }
+
+    if (/office|stationery|printer|postage|stickerapp/i.test(text)) {
+        return 'Office Costs';
+    }
+
+    if (signedAmount > 0) {
+        if (/\binv[-\s]?\d|\b\d{6}-\s*\d{3}\b|consult|security ninja|delaware digital|income/i.test(text)) {
+            return 'Sales';
+        }
+        return 'Other Income';
+    }
+
+    if (/card payment|general|expense|ebay|amazon|purchase/i.test(text)) {
+        return 'Other Expenses';
+    }
+
+    return category || '';
+}
+
 function parseCsvTransactions(csvText, bankAccountId) {
     const lines = csvText
         .replace(/^\uFEFF/, '')
@@ -142,13 +181,21 @@ function parseCsvTransactions(csvText, bankAccountId) {
             continue;
         }
 
+        const inferredCategory = inferImportedCategory({
+            description: normalizedDescription,
+            reference: referenceValue,
+            category: categoryValue,
+            type: typeValue,
+            signedAmount
+        });
+
         transactions.push({
             bankAccountId,
             transactionDate: normalizedDate,
             amount: Math.abs(signedAmount),
             description: normalizedDescription,
             reference: referenceValue || null,
-            category: categoryValue || '',
+            category: inferredCategory,
             direction: signedAmount >= 0 ? 'In' : 'Out',
             balance: parseMoney(balanceValue),
             externalId: referenceValue || null,
@@ -787,6 +834,7 @@ export default function Banking() {
                                 <tr>
                                     <th>Date</th>
                                     <th>Description</th>
+                                    <th>Category</th>
                                     <th>Amount</th>
                                     <th>Direction</th>
                                     <th>Reconciled</th>
@@ -797,6 +845,7 @@ export default function Banking() {
                                     <tr key={tx.id}>
                                         <td>{tx.transactionDate ? tx.transactionDate.substring(0, 10) : ''}</td>
                                         <td>{tx.description}</td>
+                                        <td>{tx.category || '—'}</td>
                                         <td>{tx.amount ? `£${tx.amount}` : ''}</td>
                                         <td>{tx.direction}</td>
                                         <td>{tx.isReconciled ? 'Yes' : 'No'}</td>
