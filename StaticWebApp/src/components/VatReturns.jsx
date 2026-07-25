@@ -172,6 +172,170 @@ export default function VatReturns() {
 
     // ── Derived data ──────────────────────────────────────────────────────────
 
+    // Helper: download a string as a file
+    const downloadFile = (filename, content, mimeType = 'text/csv') => {
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    // Helper: escape a CSV cell value
+    const csvCell = (v) => {
+        const s = v == null ? '' : String(v);
+        return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    const exportVatCsv = (q) => {
+        const calc = calcForQuarter(q);
+        const start = new Date(q.quarterStartDate);
+        const end   = new Date(q.quarterEndDate);
+        const label = q.quarterLabel.replace(/\//g, '-');
+
+        // ── File 1: VAT100 9-box summary ────────────────────────────────────
+        // HMRC VAT100 boxes:
+        // Box 1: VAT due on sales and other outputs (VAT In)
+        // Box 2: VAT due on acquisitions from EC (0 — not applicable post-Brexit)
+        // Box 3: Total VAT due (Box 1 + Box 2)
+        // Box 4: VAT reclaimed on purchases and other inputs (VAT Out)
+        // Box 5: Net VAT to pay / reclaim (Box 3 minus Box 4)
+        // Box 6: Total value of sales (ex VAT)
+        // Box 7: Total value of purchases (ex VAT)
+        // Box 8: Total value of EC supplies of goods (0)
+        // Box 9: Total value of EC acquisitions of goods (0)
+        const box1 = calc.vatIn;
+        const box2 = 0;
+        const box3 = box1 + box2;
+        const box4 = calc.vatOut;
+        const box5 = box3 - box4;
+
+        // Net sales value: sum of invoice net amounts in this quarter
+        const usePaymentDate = settings?.vatAccountingMethod !== 'invoice';
+        const netSales = invoices.reduce((sum, inv) => {
+            if (usePaymentDate) {
+                if (!inv.datePaid || inv.status !== 'Paid') return sum;
+                const d = new Date(inv.datePaid);
+                return (d >= start && d <= end) ? sum + (inv.amountNet || 0) : sum;
+            }
+            if (!inv.dateIssued) return sum;
+            const d = new Date(inv.dateIssued);
+            return (d >= start && d <= end) ? sum + (inv.amountNet || 0) : sum;
+        }, 0);
+
+        // Net purchases value: sum of expense + DLA net amounts in this quarter
+        const netPurchases = [
+            ...expenses.map(e => ({ date: e.entryDate, net: e.amountNet || 0 })),
+            ...dlaEntries.filter(e => e.direction === 'OwedToDirector').map(e => ({ date: e.entryDate, net: e.amountNet || 0 }))
+        ].reduce((sum, e) => {
+            if (!e.date) return sum;
+            const d = new Date(e.date);
+            return (d >= start && d <= end) ? sum + e.net : sum;
+        }, 0);
+
+        const box6 = netSales;
+        const box7 = netPurchases;
+        const box8 = 0;
+        const box9 = 0;
+
+        const summaryRows = [
+            ['VAT Return Summary', ''],
+            ['Quarter', q.quarterLabel],
+            ['Period', q.monthsLabel],
+            ['Quarter Start', q.quarterStartDate],
+            ['Quarter End', q.quarterEndDate],
+            ['Generated', new Date().toISOString().slice(0, 10)],
+            ['', ''],
+            ['Box', 'Description', 'Amount (£)'],
+            ['Box 1', 'VAT due on sales and other outputs', box1.toFixed(2)],
+            ['Box 2', 'VAT due on acquisitions from EC members', box2.toFixed(2)],
+            ['Box 3', 'Total VAT due (Box 1 + Box 2)', box3.toFixed(2)],
+            ['Box 4', 'VAT reclaimed on purchases and other inputs', box4.toFixed(2)],
+            ['Box 5', 'Net VAT to pay HMRC / reclaim (Box 3 minus Box 4)', box5.toFixed(2)],
+            ['Box 6', 'Total value of sales excluding VAT', box6.toFixed(2)],
+            ['Box 7', 'Total value of purchases excluding VAT', box7.toFixed(2)],
+            ['Box 8', 'Total value of EC supplies of goods (ex VAT)', box8.toFixed(2)],
+            ['Box 9', 'Total value of EC acquisitions of goods (ex VAT)', box9.toFixed(2)],
+        ];
+        const summaryCsv = summaryRows.map(r => r.map(csvCell).join(',')).join('\r\n');
+        downloadFile(`VAT-Return-${label}-Summary.csv`, summaryCsv);
+
+        // ── File 2: Supporting transactions ─────────────────────────────────
+        const txRows = [
+            ['VAT Return Supporting Transactions', ''],
+            ['Quarter', q.quarterLabel],
+            ['Period', q.monthsLabel],
+            ['', ''],
+            ['Type', 'Date', 'Description', 'Reference', 'Net (£)', 'VAT (£)', 'Gross (£)', 'VAT Direction'],
+        ];
+
+        // Sales invoices
+        invoices.forEach(inv => {
+            let include = false;
+            if (usePaymentDate) {
+                if (inv.datePaid && inv.status === 'Paid') {
+                    const d = new Date(inv.datePaid);
+                    include = d >= start && d <= end;
+                }
+            } else {
+                if (inv.dateIssued) {
+                    const d = new Date(inv.dateIssued);
+                    include = d >= start && d <= end;
+                }
+            }
+            if (!include) return;
+            txRows.push([
+                'Invoice',
+                usePaymentDate ? inv.datePaid : inv.dateIssued,
+                inv.customerName || '',
+                inv.invoiceNumber || '',
+                (inv.amountNet || 0).toFixed(2),
+                (inv.vatAmount || 0).toFixed(2),
+                (inv.amountGross || 0).toFixed(2),
+                'Output (Box 1)',
+            ]);
+        });
+
+        // Expenses
+        expenses.forEach(e => {
+            if (!e.entryDate) return;
+            const d = new Date(e.entryDate);
+            if (d < start || d > end) return;
+            txRows.push([
+                'Expense',
+                e.entryDate,
+                e.description || e.category || '',
+                e.reference || '',
+                (e.amountNet || 0).toFixed(2),
+                (e.vatAmount || 0).toFixed(2),
+                (e.amountGross || 0).toFixed(2),
+                e.ctTag === 'NonCT' ? 'Excluded (Non-Business)' : 'Input (Box 4)',
+            ]);
+        });
+
+        // DLA entries
+        dlaEntries.filter(e => e.direction === 'OwedToDirector').forEach(e => {
+            if (!e.entryDate) return;
+            const d = new Date(e.entryDate);
+            if (d < start || d > end) return;
+            txRows.push([
+                'DLA (Director Expense)',
+                e.entryDate,
+                e.description || e.category || '',
+                e.reference || '',
+                (e.amountNet || 0).toFixed(2),
+                (e.vatAmount || 0).toFixed(2),
+                (e.amountGross || 0).toFixed(2),
+                e.ctTag === 'NonCT' ? 'Excluded (Non-Business)' : 'Input (Box 4)',
+            ]);
+        });
+
+        const txCsv = txRows.map(r => r.map(csvCell).join(',')).join('\r\n');
+        downloadFile(`VAT-Return-${label}-Transactions.csv`, txCsv);
+    };
+
     const calcForQuarter = (q) => {
         const start = new Date(q.quarterStartDate);
         const end   = new Date(q.quarterEndDate);
@@ -1046,6 +1210,12 @@ export default function VatReturns() {
                                                 return (
                                                     <div style={{ display: 'flex', gap: 4, justifyContent: 'center', flexWrap: 'wrap', alignItems: 'center' }}>
                                                         <button
+                                                            onClick={() => exportVatCsv(q)}
+                                                            className="btn-icon"
+                                                            title="Export VAT return to CSV (VAT100 summary + transactions)"
+                                                            style={{ background: '#e8f5e9', border: '1px solid #43a047', color: '#2e7d32' }}
+                                                        >📥</button>
+                                                        <button
                                                             onClick={() => openEditModal(filed)}
                                                             className="btn-icon"
                                                             title="Edit filing details"
@@ -1098,6 +1268,14 @@ export default function VatReturns() {
                                                 </div>
                                             ) : (
                                                 <div style={{ display: 'flex', gap: 4, justifyContent: 'center', flexWrap: 'wrap' }}>
+                                                    <button
+                                                        onClick={() => exportVatCsv(q)}
+                                                        className="btn-secondary"
+                                                        style={{ fontSize: '0.82rem', padding: '4px 10px', background: '#e8f5e9', border: '1px solid #43a047', color: '#2e7d32' }}
+                                                        title="Export VAT return to CSV (VAT100 summary + transactions)"
+                                                    >
+                                                        📥 Export CSV
+                                                    </button>
                                                     <button
                                                         onClick={() => openFileModal(q)}
                                                         className="btn-primary"
