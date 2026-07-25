@@ -1441,6 +1441,27 @@ export async function autoReconcileTransactions() {
     return response.json();
 }
 
+export async function previewAutoReconcileTransactions() {
+    const headers = await getAuthHeaders();
+    const response = await fetch(`${API_BASE}/reconciliation/auto-match/preview`, {
+        method: 'POST',
+        headers
+    });
+    if (!response.ok) throw new Error('Failed to preview auto reconciliation');
+    return response.json();
+}
+
+export async function applyAutoReconcileTransactions(proposals) {
+    const headers = await getAuthHeaders();
+    const response = await fetch(`${API_BASE}/reconciliation/auto-match/apply`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ proposals })
+    });
+    if (!response.ok) throw new Error('Failed to apply auto reconciliation');
+    return response.json();
+}
+
 export async function getReconciliationRules() {
     const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE}/reconciliation/rules`, { headers });
