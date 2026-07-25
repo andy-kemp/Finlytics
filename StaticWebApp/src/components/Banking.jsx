@@ -41,6 +41,10 @@ export default function Banking() {
     const [showGcPicker, setShowGcPicker] = useState(false);
     const [gcPickerAccountId, setGcPickerAccountId] = useState(null);
 
+    const gcInstitutionList = Array.isArray(gcInstitutions)
+        ? gcInstitutions
+        : (gcInstitutions?.results || gcInstitutions?.institutions || []);
+
     useEffect(() => {
         loadAccounts();
         getTrueLayerStatus().then(setTrueLayerStatus).catch(() => setTrueLayerStatus({ connected: false }));
@@ -260,10 +264,10 @@ export default function Banking() {
     const handleGcConnectBank = async (bankAccountId) => {
         setGcPickerAccountId(bankAccountId);
         setShowGcPicker(true);
-        if (gcInstitutions.length === 0) {
+        if (gcInstitutionList.length === 0) {
             try {
                 const data = await getGoCardlessInstitutions();
-                setGcInstitutions(data);
+                setGcInstitutions(Array.isArray(data) ? data : (data?.results || data?.institutions || []));
             } catch (err) {
                 setSyncResult({ success: false, message: 'Could not load banks: ' + err.message });
                 setShowGcPicker(false);
@@ -406,11 +410,11 @@ export default function Banking() {
                         <h4 style={{ margin: 0, fontSize: '0.95rem' }}>Select your Bank (GoCardless)</h4>
                         <button onClick={() => setShowGcPicker(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1rem', color: '#6b7280' }}>✕</button>
                     </div>
-                    {gcInstitutions.length === 0 ? (
+                    {gcInstitutionList.length === 0 ? (
                         <div style={{ color: '#6b7280', fontSize: '0.875rem' }}>Loading banks...</div>
                     ) : (
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.5rem', maxHeight: 300, overflowY: 'auto' }}>
-                            {gcInstitutions.map(inst => (
+                            {gcInstitutionList.map(inst => (
                                 <button
                                     key={inst.id}
                                     onClick={() => handleGcSelectInstitution(inst.id)}
