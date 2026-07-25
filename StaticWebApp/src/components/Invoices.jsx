@@ -1,3 +1,4 @@
+// v2
 import React, { useState, useEffect } from 'react';
 import { getInvoices, createInvoice, updateInvoice, deleteInvoice, getCustomers, getCompanySettings, getNextInvoiceNumber, sendInvoiceReminder, getCreditNotesByCustomer, applyCreditNote, getLineItemDescriptions } from '../services/apiService';
 import Toast from './Toast';
@@ -1044,9 +1045,9 @@ export default function Invoices() {
                   <th>Customer</th>
                   <th>Date Issued</th>
                   <th>Due Date</th>
-                  <th style={{ textAlign: 'right' }}>Net</th>
-                  <th style={{ textAlign: 'right' }}>VAT</th>
-                  <th style={{ textAlign: 'right' }}>Gross</th>
+                  <th style={{ textAlign: 'right' }} title="Excluding VAT">Net</th>
+                  <th style={{ textAlign: 'right' }} title="VAT amount">VAT</th>
+                  <th style={{ textAlign: 'right' }} title="Including VAT">Gross</th>
                   <th>Status</th>
                   <th>Actions</th>
                 </tr>
