@@ -23,6 +23,8 @@ namespace FinanceHubFunctions.Functions
         private readonly IInvoiceRepository? _invoiceRepository;
         private readonly IExpenseRepository? _expenseRepository;
         private readonly IDlaRepository? _dlaRepository;
+        private readonly IDlaPaymentRepository? _dlaPaymentRepository;
+        private readonly IBillRepository? _billRepository;
         private readonly DeletionGuardService? _guard;
 
         public ReconciliationFunctions(
@@ -33,6 +35,8 @@ namespace FinanceHubFunctions.Functions
             IInvoiceRepository? invoiceRepository = null,
             IExpenseRepository? expenseRepository = null,
             IDlaRepository? dlaRepository = null,
+            IDlaPaymentRepository? dlaPaymentRepository = null,
+            IBillRepository? billRepository = null,
             DeletionGuardService? guard = null)
         {
             _logger = logger;
@@ -42,6 +46,8 @@ namespace FinanceHubFunctions.Functions
             _invoiceRepository = invoiceRepository;
             _expenseRepository = expenseRepository;
             _dlaRepository = dlaRepository;
+            _dlaPaymentRepository = dlaPaymentRepository;
+            _billRepository = billRepository;
             _guard = guard;
         }
 
@@ -86,26 +92,80 @@ namespace FinanceHubFunctions.Functions
             return created != null;
         }
 
+        private static decimal? AbsAmount(decimal? value)
+        {
+            return value.HasValue ? Math.Abs(value.Value) : null;
+        }
+
         private static bool AmountMatches(decimal? left, decimal? right)
         {
-            if (!left.HasValue || !right.HasValue) return false;
-            return Math.Abs(left.Value - right.Value) < 0.01m;
+            var l = AbsAmount(left);
+            var r = AbsAmount(right);
+            if (!l.HasValue || !r.HasValue) return false;
+            return Math.Abs(l.Value - r.Value) < 0.01m;
+        }
+
+        private static bool AmountClose(decimal? left, decimal? right, decimal tolerance)
+        {
+            var l = AbsAmount(left);
+            var r = AbsAmount(right);
+            if (!l.HasValue || !r.HasValue) return false;
+            return Math.Abs(l.Value - r.Value) <= tolerance;
+        }
+
+        private static bool IsDirectionIn(BankTransaction tx)
+        {
+            var d = (tx.Direction ?? string.Empty).Trim();
+            return string.Equals(d, "In", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(d, "Credit", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(d, "Incoming", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(d, "MoneyIn", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsDirectionOut(BankTransaction tx)
+        {
+            var d = (tx.Direction ?? string.Empty).Trim();
+            return string.Equals(d, "Out", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(d, "Debit", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(d, "Outgoing", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(d, "MoneyOut", StringComparison.OrdinalIgnoreCase);
         }
 
         private static int ScoreCandidate(BankTransaction tx, string combinedKey, decimal candidateAmount, string? candidatePrimaryRef, string? candidateSecondaryRef, DateTime? candidateDate)
         {
-            if (!AmountMatches(tx.Amount, candidateAmount)) return 0;
-
-            var score = 60; // amount match is the primary signal
             var primaryKey = NormalizeMatchText(candidatePrimaryRef);
             var secondaryKey = NormalizeMatchText(candidateSecondaryRef);
+            var primaryRefHit = !string.IsNullOrEmpty(primaryKey) && combinedKey.Contains(primaryKey, StringComparison.Ordinal);
+            var secondaryRefHit = !string.IsNullOrEmpty(secondaryKey) && combinedKey.Contains(secondaryKey, StringComparison.Ordinal);
 
-            if (!string.IsNullOrEmpty(primaryKey) && combinedKey.Contains(primaryKey, StringComparison.Ordinal))
+            var score = 0;
+            if (AmountMatches(tx.Amount, candidateAmount))
+            {
+                score += 70; // exact amount remains the strongest signal
+            }
+            else if (AmountClose(tx.Amount, candidateAmount, 1.00m))
+            {
+                score += 50;
+            }
+            else if (AmountClose(tx.Amount, candidateAmount, 5.00m))
+            {
+                score += 35;
+            }
+            else if (primaryRefHit)
+            {
+                // Allow strong reference hits into preview even if amount differs.
+                // User can confirm/reject before apply.
+                score += 20;
+            }
+
+            if (score == 0) return 0;
+
+            if (primaryRefHit)
             {
                 score += 25;
             }
 
-            if (!string.IsNullOrEmpty(secondaryKey) && combinedKey.Contains(secondaryKey, StringComparison.Ordinal))
+            if (secondaryRefHit)
             {
                 score += 15;
             }
@@ -122,15 +182,19 @@ namespace FinanceHubFunctions.Functions
             return score;
         }
 
-        private List<AutoCandidate> BuildCandidates(BankTransaction tx, List<Invoice> invoices, List<Expense> expenses, List<DlaEntry> dlaEntries)
+        private List<AutoCandidate> BuildCandidates(BankTransaction tx, List<Invoice> invoices, List<Expense> expenses, List<DlaEntry> dlaEntries, List<DlaPayment> dlaPayments, List<Bill> bills)
         {
             var descriptionKey = NormalizeMatchText(tx.Description);
             var referenceKey = NormalizeMatchText(tx.Reference);
-            var combinedKey = string.Concat(descriptionKey, referenceKey);
+            var externalIdKey = NormalizeMatchText(tx.ExternalId);
+            var merchantKey = NormalizeMatchText(tx.TrueLayerMerchantName ?? tx.MonzoMerchantName);
+            var combinedKey = string.Concat(descriptionKey, referenceKey, externalIdKey, merchantKey);
 
             var candidates = new List<AutoCandidate>();
+            var canMatchIn = IsDirectionIn(tx) || !IsDirectionOut(tx);
+            var canMatchOut = IsDirectionOut(tx) || !IsDirectionIn(tx);
 
-            if (string.Equals(tx.Direction, "In", StringComparison.OrdinalIgnoreCase))
+            if (canMatchIn)
             {
                 foreach (var invoice in invoices)
                 {
@@ -160,8 +224,30 @@ namespace FinanceHubFunctions.Functions
                 }
             }
 
-            if (string.Equals(tx.Direction, "Out", StringComparison.OrdinalIgnoreCase))
+            if (canMatchOut)
             {
+                foreach (var payment in dlaPayments)
+                {
+                    var score = ScoreCandidate(
+                        tx,
+                        combinedKey,
+                        payment.Amount,
+                        payment.PaymentId ?? payment.DlaId,
+                        payment.PaymentReference ?? payment.Director,
+                        payment.PaymentDate);
+
+                    if (score <= 0) continue;
+
+                    candidates.Add(new AutoCandidate
+                    {
+                        RelatedType = "DLA-Payment",
+                        RelatedId = payment.Id.ToString(),
+                        Display = $"DLA Payment {payment.PaymentId} ({payment.DlaId})",
+                        Notes = $"Matched DLA payment {payment.PaymentId ?? payment.DlaId}",
+                        Score = score + 5
+                    });
+                }
+
                 foreach (var dla in dlaEntries)
                 {
                     var score = ScoreCandidate(
@@ -180,6 +266,29 @@ namespace FinanceHubFunctions.Functions
                         RelatedId = dla.Id.ToString(),
                         Display = $"DLA {dla.DlaId} ({dla.Director})",
                         Notes = $"Matched DLA {dla.DlaId}",
+                        Score = score
+                    });
+                }
+
+                foreach (var bill in bills)
+                {
+                    var billAmount = bill.AmountPaid > 0 ? bill.AmountPaid : bill.AmountGross;
+                    var score = ScoreCandidate(
+                        tx,
+                        combinedKey,
+                        billAmount,
+                        bill.BillNumber,
+                        bill.PaymentReference ?? bill.SupplierReference ?? bill.SupplierName,
+                        bill.DatePaid ?? bill.DateIssued);
+
+                    if (score <= 0) continue;
+
+                    candidates.Add(new AutoCandidate
+                    {
+                        RelatedType = "Bill",
+                        RelatedId = bill.Id.ToString(),
+                        Display = $"Bill {bill.BillNumber} ({bill.SupplierName})",
+                        Notes = $"Matched bill {bill.BillNumber}",
                         Score = score
                     });
                 }
@@ -214,7 +323,7 @@ namespace FinanceHubFunctions.Functions
                 .ToList();
         }
 
-        private object BuildPreviewResponse(List<BankTransaction> transactions, List<Invoice> invoices, List<Expense> expenses, List<DlaEntry> dlaEntries)
+        private object BuildPreviewResponse(List<BankTransaction> transactions, List<Invoice> invoices, List<Expense> expenses, List<DlaEntry> dlaEntries, List<DlaPayment> dlaPayments, List<Bill> bills)
         {
             var proposals = new List<object>();
             var unmatched = new List<object>();
@@ -222,7 +331,7 @@ namespace FinanceHubFunctions.Functions
 
             foreach (var tx in transactions)
             {
-                var candidates = BuildCandidates(tx, invoices, expenses, dlaEntries);
+                var candidates = BuildCandidates(tx, invoices, expenses, dlaEntries, dlaPayments, bills);
 
                 if (candidates.Count == 0)
                 {
@@ -371,11 +480,13 @@ namespace FinanceHubFunctions.Functions
             var invoices = (await _invoiceRepository.GetAllAsync()).ToList();
             var expenses = (await _expenseRepository.GetAllAsync()).ToList();
             var dlaEntries = (await _dlaRepository.GetAllAsync()).ToList();
+            var dlaPayments = _dlaPaymentRepository != null ? await _dlaPaymentRepository.GetAllAsync() : new List<DlaPayment>();
+            var bills = _billRepository != null ? (await _billRepository.GetAllAsync()).ToList() : new List<Bill>();
 
             var reconciled = 0;
             foreach (var tx in transactions)
             {
-                var candidates = BuildCandidates(tx, invoices, expenses, dlaEntries);
+                var candidates = BuildCandidates(tx, invoices, expenses, dlaEntries, dlaPayments, bills);
                 if (candidates.Count == 0) continue;
 
                 var top = candidates[0];
@@ -414,8 +525,10 @@ namespace FinanceHubFunctions.Functions
             var invoices = (await _invoiceRepository.GetAllAsync()).ToList();
             var expenses = (await _expenseRepository.GetAllAsync()).ToList();
             var dlaEntries = (await _dlaRepository.GetAllAsync()).ToList();
+            var dlaPayments = _dlaPaymentRepository != null ? await _dlaPaymentRepository.GetAllAsync() : new List<DlaPayment>();
+            var bills = _billRepository != null ? (await _billRepository.GetAllAsync()).ToList() : new List<Bill>();
 
-            var preview = BuildPreviewResponse(transactions, invoices, expenses, dlaEntries);
+            var preview = BuildPreviewResponse(transactions, invoices, expenses, dlaEntries, dlaPayments, bills);
             var ok = req.CreateResponse(HttpStatusCode.OK);
             await ok.WriteAsJsonAsync(preview);
             return ok;
