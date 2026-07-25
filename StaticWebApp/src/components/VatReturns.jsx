@@ -324,21 +324,29 @@ export default function VatReturns() {
     const isCurrentQuarter = (q) => q.isCurrent;
     const isPastQuarter     = (q) => !q.isCurrent;
 
-    // Only show quarters from the VAT registration / inception date onwards.
-    // Quarters entirely before incorporation are not real VAT filing obligations.
+    // Only show quarters that overlap with the VAT-effective date onwards.
+    // Use VAT effective date if available; fallback to inception/incorporation.
     // Always keep quarters that already have a filed record (historical data).
-    const inceptionDateForFilter = settings?.incorporationDate
-        ? new Date(settings.incorporationDate)
+    const vatLowerBoundForFilter = settings?.vatEffectiveDate
+        ? new Date(settings.vatEffectiveDate)
         : settings?.companyInceptionDate
             ? new Date(settings.companyInceptionDate)
-            : null;
+            : settings?.incorporationDate
+                ? new Date(settings.incorporationDate)
+                : null;
 
-    const displayQuarters = inceptionDateForFilter
-        ? quarters.filter(q =>
-            new Date(q.quarterStartDate) >= inceptionDateForFilter
-            || !!getFiledForQuarter(q)
-          )
+    const displayQuarters = vatLowerBoundForFilter
+        ? quarters.filter(q => {
+            const qStart = new Date(q.quarterStartDate);
+            const qEnd = new Date(q.quarterEndDate);
+            const overlapsVatTimeline = qEnd >= vatLowerBoundForFilter || qStart >= vatLowerBoundForFilter;
+            return overlapsVatTimeline || !!getFiledForQuarter(q);
+        })
         : quarters;
+
+    const missedPastQuarters = displayQuarters
+        .filter(q => isPastQuarter(q) && !getFiledForQuarter(q))
+        .sort((a, b) => new Date(a.quarterStartDate) - new Date(b.quarterStartDate));
 
     // Total unfiled VAT owed across displayed quarters only
     const unfiledOwed = displayQuarters.reduce((sum, q) => {
@@ -701,6 +709,55 @@ export default function VatReturns() {
                                 </div>
                             );
                         })()}
+                        {missedPastQuarters.length > 1 && (
+                            <div style={{
+                                background: '#fff3cd',
+                                border: '1px solid #ffe69c',
+                                borderRadius: 8,
+                                padding: '12px 16px'
+                            }}>
+                                <div style={{ fontWeight: 700, color: '#856404', marginBottom: 8 }}>
+                                    ⚠ Missed submissions found: {missedPastQuarters.length} quarters need filing
+                                </div>
+                                <div style={{ display: 'grid', gap: 8 }}>
+                                    {missedPastQuarters.map((q) => {
+                                        const due = vatPaymentDue(q.quarterEndDate);
+                                        const calc = calcForQuarter(q);
+                                        const isOverdue = now > due;
+                                        return (
+                                            <div key={`${q.quarterLabel}-${q.quarterStartDate}`} style={{
+                                                background: '#fff',
+                                                border: '1px solid #ffe8a1',
+                                                borderRadius: 6,
+                                                padding: '8px 10px',
+                                                display: 'flex',
+                                                gap: 10,
+                                                alignItems: 'center',
+                                                justifyContent: 'space-between',
+                                                flexWrap: 'wrap'
+                                            }}>
+                                                <div style={{ fontSize: '0.9rem' }}>
+                                                    <strong>{q.quarterLabel}</strong> ({q.monthsLabel})
+                                                    <span style={{ marginLeft: 8, color: isOverdue ? '#721c24' : '#856404' }}>
+                                                        {isOverdue ? 'Overdue' : 'Due'} {fmtDate(due)}
+                                                    </span>
+                                                    <span style={{ marginLeft: 8, color: '#6c757d' }}>
+                                                        Net {fmt(calc.vatOwed)}
+                                                    </span>
+                                                </div>
+                                                <button
+                                                    className="btn-primary"
+                                                    style={{ padding: '4px 12px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}
+                                                    onClick={() => openFileModal(q)}
+                                                >
+                                                    File Now
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
                         {currentQ && (() => {
                             const qEnd = new Date(currentQ.quarterEndDate);
                             const due  = vatPaymentDue(currentQ.quarterEndDate);

@@ -998,6 +998,11 @@ export default function Invoices() {
                                   <span>{invoice.customerName}</span>
                                   <span className={`status-badge status-${invoice.status?.toLowerCase()}`}>{invoice.status}</span>
                               </div>
+                              <div className="card-meta-row" style={{ color: '#6c757d' }}>
+                                <span>Net £{invoice.amountNet?.toFixed(2) || '0.00'}</span>
+                                <span>VAT £{invoice.vatAmount?.toFixed(2) || '0.00'}</span>
+                                <span>Gross £{invoice.amountGross?.toFixed(2) || '0.00'}</span>
+                              </div>
                               <div className="card-meta-row">
                                   <span>{invoice.dateIssued ? new Date(invoice.dateIssued).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</span>
                                   {invoice.dueDate && <span>Due: {new Date(invoice.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>}
@@ -1039,7 +1044,9 @@ export default function Invoices() {
                   <th>Customer</th>
                   <th>Date Issued</th>
                   <th>Due Date</th>
-                  <th>Amount</th>
+                  <th style={{ textAlign: 'right' }}>Net</th>
+                  <th style={{ textAlign: 'right' }}>VAT</th>
+                  <th style={{ textAlign: 'right' }}>Gross</th>
                   <th>Status</th>
                   <th>Actions</th>
                 </tr>
@@ -1065,7 +1072,13 @@ export default function Invoices() {
                         </span>
                       )}
                     </td>
-                    <td>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      £{invoice.amountNet?.toFixed(2) || '0.00'}
+                    </td>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      £{invoice.vatAmount?.toFixed(2) || '0.00'}
+                    </td>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                       £{invoice.amountGross?.toFixed(2) || '0.00'}
                       {invoice.creditNoteDeduction > 0 && (
                         <span title={`Credit note ${invoice.creditNoteNumber} applied: -£${invoice.creditNoteDeduction.toFixed(2)}`}
