@@ -545,6 +545,72 @@ namespace FinanceHubFunctions.Functions
                              && t.TaxYear == taxYear)
                     .ToList();
 
+                var existingDraftClaim = (await _claimRepository.GetByDirectorAndTaxYearAsync(director, taxYear))
+                    .Where(c => c.Status == "Draft")
+                    .OrderByDescending(c => c.CreatedAt)
+                    .FirstOrDefault();
+
+                if (existingDraftClaim != null)
+                {
+                    var alreadyLinkedDraftTrips = (await _tripRepository.GetAllAsync())
+                        .Where(t => t.ClaimId == existingDraftClaim.Id && t.Status == "Draft")
+                        .ToList();
+
+                    foreach (var trip in draftTrips)
+                    {
+                        trip.ClaimId = existingDraftClaim.Id;
+                        await _tripRepository.UpdateAsync(trip);
+                    }
+
+                    var combinedTrips = alreadyLinkedDraftTrips
+                        .Concat(draftTrips)
+                        .GroupBy(t => t.Id)
+                        .Select(g => g.First())
+                        .ToList();
+
+                    if (combinedTrips.Count == 0)
+                    {
+                        var emptyExisting = req.CreateResponse(HttpStatusCode.BadRequest);
+                        await emptyExisting.WriteStringAsync("No Draft trips found to update the existing claim");
+                        return emptyExisting;
+                    }
+
+                    var computedExisting = await BuildComputedTripMapAsync(combinedTrips);
+                    foreach (var trip in combinedTrips)
+                    {
+                        if (!computedExisting.TryGetValue(trip.Id, out var calc)) continue;
+                        trip.MilesAt45p = calc.MilesAt45p;
+                        trip.MilesAt25p = calc.MilesAt25p;
+                        trip.AmountAt45p = calc.AmountAt45p;
+                        trip.AmountAt25p = calc.AmountAt25p;
+                        trip.TotalAmount = calc.TotalAmount;
+                        await _tripRepository.UpdateAsync(trip);
+                    }
+
+                    existingDraftClaim.PeriodStart = existingDraftClaim.PeriodStart < periodStart ? existingDraftClaim.PeriodStart : periodStart;
+                    existingDraftClaim.PeriodEnd = existingDraftClaim.PeriodEnd > periodEnd ? existingDraftClaim.PeriodEnd : periodEnd;
+                    existingDraftClaim.TotalMiles = combinedTrips.Sum(t => t.Miles);
+                    existingDraftClaim.MilesAt45p = combinedTrips.Sum(t => t.MilesAt45p);
+                    existingDraftClaim.MilesAt25p = combinedTrips.Sum(t => t.MilesAt25p);
+                    existingDraftClaim.TotalAmount = combinedTrips.Sum(t => t.TotalAmount);
+                    if (!string.IsNullOrWhiteSpace(notes))
+                        existingDraftClaim.Notes = notes;
+
+                    var updatedClaim = await _claimRepository.UpdateAsync(existingDraftClaim);
+
+                    var updatedResp = req.CreateResponse(HttpStatusCode.OK);
+                    await updatedResp.WriteAsJsonAsync(new
+                    {
+                        claim = updatedClaim,
+                        tripsLinked = combinedTrips.Count,
+                        newlyLinked = draftTrips.Count,
+                        message = draftTrips.Count > 0
+                            ? "Existing draft claim updated with additional trips"
+                            : "Existing draft claim refreshed"
+                    });
+                    return updatedResp;
+                }
+
                 if (draftTrips.Count == 0)
                 {
                     var empty = req.CreateResponse(HttpStatusCode.BadRequest);

@@ -20,6 +20,26 @@ function currentTaxYear() {
     return `${startYear}/${String((startYear + 1) % 100).padStart(2, '0')}`;
 }
 
+function taxYearDateBounds(taxYearLabel) {
+    const startYear = Number(String(taxYearLabel || '').split('/')[0]);
+    if (!Number.isFinite(startYear)) {
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        return {
+            periodStart: monthStart.toISOString().split('T')[0],
+            periodEnd: monthEnd.toISOString().split('T')[0]
+        };
+    }
+
+    const start = new Date(startYear, 3, 6); // 6 April
+    const end = new Date(startYear + 1, 3, 5); // 5 April next year
+    return {
+        periodStart: start.toISOString().split('T')[0],
+        periodEnd: end.toISOString().split('T')[0]
+    };
+}
+
 function defaultPrimaryRateForTaxYear(taxYear) {
     const startYear = Number(String(taxYear || '').split('/')[0]);
     return Number.isFinite(startYear) && startYear >= 2026 ? 0.55 : 0.45;
@@ -100,11 +120,14 @@ const MileageTrips = ({ openNew }) => {
 
     // Generate claim modal
     const [showClaimModal,  setShowClaimModal]  = useState(false);
-    const [claimForm,       setClaimForm]       = useState({
-        director:    '',
-        periodStart: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
-        periodEnd:   new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().split('T')[0],
-        notes:       ''
+    const [claimForm,       setClaimForm]       = useState(() => {
+        const bounds = taxYearDateBounds(currentTaxYear());
+        return {
+            director: '',
+            periodStart: bounds.periodStart,
+            periodEnd: bounds.periodEnd,
+            notes: ''
+        };
     });
 
     // ── data loaders ──────────────────────────────────────────────────────────
@@ -269,6 +292,29 @@ const MileageTrips = ({ openNew }) => {
         } finally {
             setProcessing(false);
         }
+    };
+
+    const openClaimModal = () => {
+        const director = filterDirector || directors[0] || '';
+        const drafts = trips
+            .filter(t => t.status === 'Draft' && !t.claimId)
+            .filter(t => !director || t.director === director)
+            .filter(t => t.tripDate)
+            .map(t => new Date(t.tripDate))
+            .filter(d => !Number.isNaN(d.getTime()))
+            .sort((a, b) => a - b);
+
+        const fallback = taxYearDateBounds(taxYear);
+        const periodStart = drafts.length ? drafts[0].toISOString().split('T')[0] : fallback.periodStart;
+        const periodEnd = drafts.length ? drafts[drafts.length - 1].toISOString().split('T')[0] : fallback.periodEnd;
+
+        setClaimForm(prev => ({
+            ...prev,
+            director,
+            periodStart,
+            periodEnd
+        }));
+        setShowClaimModal(true);
     };
 
     // ── submit claim ───────────────────────────────────────────────────────────
@@ -557,10 +603,7 @@ const MileageTrips = ({ openNew }) => {
                         <div style={{ marginTop: 16 }}>
                             <button
                                 className="btn-secondary"
-                                onClick={() => {
-                                    setClaimForm(prev => ({ ...prev, director: filterDirector || directors[0] || '' }));
-                                    setShowClaimModal(true);
-                                }}
+                                onClick={openClaimModal}
                                 disabled={processing}
                             >
                                 📋 Generate Claim from Draft Trips
@@ -576,10 +619,7 @@ const MileageTrips = ({ openNew }) => {
                     <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
                         <button
                             className="btn-secondary"
-                            onClick={() => {
-                                setClaimForm(prev => ({ ...prev, director: filterDirector || directors[0] || '' }));
-                                setShowClaimModal(true);
-                            }}
+                            onClick={openClaimModal}
                             disabled={processing}
                         >
                             📋 Generate Claim
