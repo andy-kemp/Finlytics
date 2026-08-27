@@ -70,6 +70,8 @@ export default function Dashboard() {
   if (error) return <div className="error-banner">⚠️ {error}</div>
 
   const tracker = stats?.mileageTracker
+  const primaryRatePence = tracker?.rateBelow ? Math.round(tracker.rateBelow * 100) : 55
+  const secondaryRatePence = tracker?.rateAbove ? Math.round(tracker.rateAbove * 100) : 25
   const pct = tracker?.percentUsed || 0
   const todayStr = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
   const displayName = user?.fullName || user?.firstName || profile?.displayName || 'there'
@@ -152,15 +154,15 @@ export default function Dashboard() {
               </div>
               <div className="tracker-details">
                 <div className="detail-item">
-                  <span>At 45p ({tracker.milesAt45p?.toLocaleString()} mi)</span>
+                  <span>At {primaryRatePence}p ({tracker.milesAt45p?.toLocaleString()} mi)</span>
                   <strong>£{tracker.amountClaimed?.toFixed(2)}</strong>
                 </div>
                 <div className="detail-item">
-                  <span>Remaining at 45p</span>
+                  <span>Remaining at {primaryRatePence}p</span>
                   <strong>{tracker.remainingMilesAt45p?.toLocaleString()} mi (£{tracker.remainingValueAt45p?.toFixed(2)})</strong>
                 </div>
                 {tracker.isOver10k && (
-                  <div className="rate-warning">⚠️ Over 10,000 miles — rate now 25p/mile</div>
+                  <div className="rate-warning">⚠️ Over 10,000 miles — rate now {secondaryRatePence}p/mile</div>
                 )}
               </div>
             </div>

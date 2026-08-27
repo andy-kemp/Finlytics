@@ -22,7 +22,9 @@ namespace FinanceHubFunctions.Functions
         private readonly ICompanyLedgerRepository _ledgerRepository;
 
         // Fallback defaults — overridden by CompanySettings.AmapRate45p/25p/ThresholdMiles
+        // HMRC updated the first-band AMAP rate to 55p from tax year 2026/27 onward.
         private const decimal DefaultRate45p       = 0.45m;
+        private const decimal DefaultRate55p       = 0.55m;
         private const decimal DefaultRate25p       = 0.25m;
         private const decimal DefaultThresholdMiles = 10000m;
 
@@ -47,14 +49,88 @@ namespace FinanceHubFunctions.Functions
             _guard = guard;
         }
 
-        private async Task<(decimal Rate45p, decimal Rate25p, decimal Threshold)> GetAmapSettingsAsync()
+        private static int? ParseTaxYearStart(string taxYear)
+        {
+            if (string.IsNullOrWhiteSpace(taxYear)) return null;
+            var slash = taxYear.IndexOf('/');
+            if (slash <= 0) return null;
+            return int.TryParse(taxYear[..slash], out var startYear) ? startYear : null;
+        }
+
+        private static decimal GetDefaultRate45pForTaxYear(string taxYear)
+        {
+            var startYear = ParseTaxYearStart(taxYear);
+            return startYear.HasValue && startYear.Value >= 2026 ? DefaultRate55p : DefaultRate45p;
+        }
+
+        private static bool IsTaxYear2026OrLater(string taxYear)
+        {
+            var startYear = ParseTaxYearStart(taxYear);
+            return startYear.HasValue && startYear.Value >= 2026;
+        }
+
+        private async Task<(decimal Rate45p, decimal Rate25p, decimal Threshold)> GetAmapSettingsAsync(string taxYear = null)
         {
             var settings = await _settingsRepository.GetDefaultAsync();
+            var defaultRate45 = GetDefaultRate45pForTaxYear(taxYear);
+            var configuredRate45 = settings?.AmapRate45p;
+
+            // Backward-compatibility: many tenants still have a legacy 0.45 value
+            // saved from prior defaults. For 2026/27+, treat that exact legacy value
+            // as the new HMRC default 0.55 unless they set a different explicit rate.
+            if (IsTaxYear2026OrLater(taxYear) && configuredRate45.HasValue && configuredRate45.Value == 0.45m)
+                configuredRate45 = DefaultRate55p;
+
             return (
-                settings?.AmapRate45p     ?? DefaultRate45p,
+                configuredRate45     ?? defaultRate45,
                 settings?.AmapRate25p     ?? DefaultRate25p,
                 settings?.AmapThresholdMiles ?? DefaultThresholdMiles
             );
+        }
+
+        private static (decimal MilesAt45p, decimal MilesAt25p, decimal AmountAt45p, decimal AmountAt25p, decimal TotalAmount)
+            ComputeTripBreakdown(decimal miles, decimal cumulativeBefore, decimal threshold, decimal rate45p, decimal rate25p)
+        {
+            var (at45, at25) = SplitMiles(miles, cumulativeBefore, threshold);
+            var amt45 = Math.Round(at45 * rate45p, 2);
+            var amt25 = Math.Round(at25 * rate25p, 2);
+            return (at45, at25, amt45, amt25, amt45 + amt25);
+        }
+
+        private async Task<Dictionary<int, (decimal MilesAt45p, decimal MilesAt25p, decimal AmountAt45p, decimal AmountAt25p, decimal TotalAmount)>>
+            BuildComputedTripMapAsync(IEnumerable<MileageTrip> targetTrips)
+        {
+            var targetList = targetTrips.Where(t => t != null).ToList();
+            var result = new Dictionary<int, (decimal, decimal, decimal, decimal, decimal)>();
+            if (targetList.Count == 0) return result;
+
+            var grouped = targetList
+                .Where(t => !string.IsNullOrWhiteSpace(t.Director) && !string.IsNullOrWhiteSpace(t.TaxYear))
+                .GroupBy(t => new { t.Director, t.TaxYear });
+
+            foreach (var group in grouped)
+            {
+                var sourceTrips = (await _tripRepository.GetByDirectorAndTaxYearAsync(group.Key.Director, group.Key.TaxYear))
+                    .OrderBy(t => t.TripDate)
+                    .ThenBy(t => t.CreatedAt)
+                    .ThenBy(t => t.Id)
+                    .ToList();
+
+                var targetIds = new HashSet<int>(group.Select(t => t.Id));
+                var (rate45p, rate25p, threshold) = await GetAmapSettingsAsync(group.Key.TaxYear);
+                decimal cumulative = 0m;
+
+                foreach (var trip in sourceTrips)
+                {
+                    var calc = ComputeTripBreakdown(trip.Miles, cumulative, threshold, rate45p, rate25p);
+                    if (targetIds.Contains(trip.Id))
+                        result[trip.Id] = calc;
+
+                    cumulative += trip.Miles;
+                }
+            }
+
+            return result;
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -106,8 +182,20 @@ namespace FinanceHubFunctions.Functions
                 if (!string.IsNullOrEmpty(status))
                     trips = trips.Where(t => string.Equals(t.Status, status, StringComparison.OrdinalIgnoreCase));
 
+                var tripList = trips.ToList();
+                var computed = await BuildComputedTripMapAsync(tripList);
+                foreach (var trip in tripList)
+                {
+                    if (!computed.TryGetValue(trip.Id, out var calc)) continue;
+                    trip.MilesAt45p = calc.MilesAt45p;
+                    trip.MilesAt25p = calc.MilesAt25p;
+                    trip.AmountAt45p = calc.AmountAt45p;
+                    trip.AmountAt25p = calc.AmountAt25p;
+                    trip.TotalAmount = calc.TotalAmount;
+                }
+
                 var resp = req.CreateResponse(HttpStatusCode.OK);
-                await resp.WriteAsJsonAsync(trips);
+                await resp.WriteAsJsonAsync(tripList);
                 return resp;
             }
             catch (Exception ex)
@@ -153,7 +241,7 @@ namespace FinanceHubFunctions.Functions
                 // Get cumulative miles already logged this tax year
                 decimal priorMiles = await _tripRepository.GetCumulativeMilesByTaxYearAsync(trip.Director, trip.TaxYear);
 
-                var (rate45p, rate25p, threshold) = await GetAmapSettingsAsync();
+                var (rate45p, rate25p, threshold) = await GetAmapSettingsAsync(trip.TaxYear);
                 var (at45, at25) = SplitMiles(totalMiles, priorMiles, threshold);
                 trip.MilesAt45p  = at45;
                 trip.MilesAt25p  = at25;
@@ -231,7 +319,7 @@ namespace FinanceHubFunctions.Functions
                 decimal allMiles = await _tripRepository.GetCumulativeMilesByTaxYearAsync(update.Director, update.TaxYear);
                 decimal priorMiles = allMiles - existing.Miles; // subtract old value
 
-                var (rate45p, rate25p, threshold) = await GetAmapSettingsAsync();
+                var (rate45p, rate25p, threshold) = await GetAmapSettingsAsync(update.TaxYear);
                 var (at45, at25) = SplitMiles(totalMiles, Math.Max(0, priorMiles), threshold);
                 update.MilesAt45p  = at45;
                 update.MilesAt25p  = at25;
@@ -314,12 +402,44 @@ namespace FinanceHubFunctions.Functions
                     trips = await _tripRepository.GetByTaxYearAsync(taxYear);
 
                 var tripList = trips.ToList();
-                decimal totalMiles  = tripList.Sum(t => t.Miles);
-                decimal totalAt45   = tripList.Sum(t => t.MilesAt45p);
-                decimal totalAt25   = tripList.Sum(t => t.MilesAt25p);
-                decimal totalAmount = tripList.Sum(t => t.TotalAmount);
+                var (rate45p, rate25p, threshold) = await GetAmapSettingsAsync(taxYear);
+                decimal totalMiles = tripList.Sum(t => t.Miles);
+                decimal totalAt45 = 0m;
+                decimal totalAt25 = 0m;
+                decimal totalAmount = 0m;
 
-                var (rate45p, rate25p, threshold) = await GetAmapSettingsAsync();
+                if (!string.IsNullOrEmpty(director))
+                {
+                    decimal cumulative = 0m;
+                    foreach (var trip in tripList.OrderBy(t => t.TripDate).ThenBy(t => t.CreatedAt).ThenBy(t => t.Id))
+                    {
+                        var calc = ComputeTripBreakdown(trip.Miles, cumulative, threshold, rate45p, rate25p);
+                        totalAt45 += calc.MilesAt45p;
+                        totalAt25 += calc.MilesAt25p;
+                        totalAmount += calc.TotalAmount;
+                        cumulative += trip.Miles;
+                    }
+                }
+                else
+                {
+                    var byDirector = tripList
+                        .Where(t => !string.IsNullOrWhiteSpace(t.Director))
+                        .GroupBy(t => t.Director);
+
+                    foreach (var group in byDirector)
+                    {
+                        decimal cumulative = 0m;
+                        foreach (var trip in group.OrderBy(t => t.TripDate).ThenBy(t => t.CreatedAt).ThenBy(t => t.Id))
+                        {
+                            var calc = ComputeTripBreakdown(trip.Miles, cumulative, threshold, rate45p, rate25p);
+                            totalAt45 += calc.MilesAt45p;
+                            totalAt25 += calc.MilesAt25p;
+                            totalAmount += calc.TotalAmount;
+                            cumulative += trip.Miles;
+                        }
+                    }
+                }
+
                 var summary = new
                 {
                     TaxYear         = taxYear,
@@ -432,6 +552,18 @@ namespace FinanceHubFunctions.Functions
                     return empty;
                 }
 
+                var computedDrafts = await BuildComputedTripMapAsync(draftTrips);
+                foreach (var trip in draftTrips)
+                {
+                    if (!computedDrafts.TryGetValue(trip.Id, out var calc)) continue;
+                    trip.MilesAt45p = calc.MilesAt45p;
+                    trip.MilesAt25p = calc.MilesAt25p;
+                    trip.AmountAt45p = calc.AmountAt45p;
+                    trip.AmountAt25p = calc.AmountAt25p;
+                    trip.TotalAmount = calc.TotalAmount;
+                    await _tripRepository.UpdateAsync(trip);
+                }
+
                 var claim = new MileageClaim
                 {
                     ClaimRef    = await _claimRepository.GenerateNextClaimRefAsync(),
@@ -508,15 +640,31 @@ namespace FinanceHubFunctions.Functions
                     return bad;
                 }
 
-                // Recalculate totals from current trips (in case any were edited)
+                var computedClaimTrips = await BuildComputedTripMapAsync(trips);
+                foreach (var trip in trips)
+                {
+                    if (!computedClaimTrips.TryGetValue(trip.Id, out var calc)) continue;
+                    trip.MilesAt45p = calc.MilesAt45p;
+                    trip.MilesAt25p = calc.MilesAt25p;
+                    trip.AmountAt45p = calc.AmountAt45p;
+                    trip.AmountAt25p = calc.AmountAt25p;
+                    trip.TotalAmount = calc.TotalAmount;
+                    await _tripRepository.UpdateAsync(trip);
+                }
+
+                // Recalculate totals from current computed trips
                 claim.TotalMiles  = trips.Sum(t => t.Miles);
                 claim.MilesAt45p  = trips.Sum(t => t.MilesAt45p);
                 claim.MilesAt25p  = trips.Sum(t => t.MilesAt25p);
                 claim.TotalAmount = trips.Sum(t => t.TotalAmount);
 
+                var (rate45p, rate25p, _) = await GetAmapSettingsAsync(claim.TaxYear);
+                var rate45Label = $"{Math.Round(rate45p * 100m, 0):0}p";
+                var rate25Label = $"{Math.Round(rate25p * 100m, 0):0}p";
+
                 var periodKey   = claim.PeriodEnd.ToString("yyyy-MM");
                 var description = $"Mileage Allowance — {claim.Director} — {claim.PeriodStart:dd MMM yyyy} to {claim.PeriodEnd:dd MMM yyyy} " +
-                                  $"({claim.TotalMiles:0.##} miles @ {claim.MilesAt45p:0.##}mi×45p + {claim.MilesAt25p:0.##}mi×25p)";
+                                  $"({claim.TotalMiles:0.##} miles @ {claim.MilesAt45p:0.##}mi×{rate45Label} + {claim.MilesAt25p:0.##}mi×{rate25Label})";
 
                 // Create DLA entry (Director owed reimbursement)
                 var dlaEntry = new DlaEntry
@@ -606,10 +754,10 @@ namespace FinanceHubFunctions.Functions
                     await notFound.WriteStringAsync("Claim not found");
                     return notFound;
                 }
-                if (claim.Status != "Posted" && claim.Status != "Submitted")
+                if (claim.Status != "Posted" && claim.Status != "Submitted" && claim.Status != "Claimed")
                 {
                     var conflict = req.CreateResponse(HttpStatusCode.Conflict);
-                    await conflict.WriteStringAsync("Only Posted or Submitted claims can be marked as Paid");
+                    await conflict.WriteStringAsync("Only Posted, Submitted, or Claimed claims can be marked as Paid");
                     return conflict;
                 }
 

@@ -61,7 +61,7 @@ namespace FinanceHubFunctions.Models
         public string? VatAccountingMethod { get; set; } // 'invoice' (default) or 'cash' (UK Cash Accounting Scheme)
         public DateTime? VatEffectiveDate { get; set; } // Date VAT registration became effective — quarters before this are not required
         public string? Utr { get; set; } // HMRC Unique Taxpayer Reference (10 digits)
-        public decimal? AmapRate45p { get; set; }        // HMRC AMAP rate for first N miles (default 0.45)
+        public decimal? AmapRate45p { get; set; }        // HMRC AMAP rate for first N miles (default 0.55 from 2026/27, else 0.45)
         public decimal? AmapRate25p { get; set; }        // HMRC AMAP rate over threshold (default 0.25)
         public decimal? AmapThresholdMiles { get; set; } // HMRC AMAP mileage threshold (default 10,000)
         public bool? AllowDataDeletion { get; set; }    // Master switch: when false, ALL record deletion is blocked (production safety)

@@ -169,7 +169,7 @@ const DLA = ({ openNew }) => {
         overrideClassification: false
     });
 
-    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://financehub-func-kemponline.azurewebsites.net/api';
+    const API_BASE_URL = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_BASE_URL || 'https://financehub-func-kemponline.azurewebsites.net/api';
 
     useEffect(() => {
         loadData();
@@ -762,7 +762,8 @@ const DLA = ({ openNew }) => {
                 paymentAmount: parseFloat(paymentData.paymentAmount) || 0,
                 paymentDate: new Date(paymentData.paymentDate).toISOString(),
                 paymentMethod: paymentData.paymentMethod || null,
-                notes: paymentData.notes
+                notes: paymentData.notes,
+                sendEmail: false
             };
 
             const response = await fetch(`${API_BASE_URL}/dla/${paymentEntry.dlaId}/payment`, {
@@ -776,9 +777,11 @@ const DLA = ({ openNew }) => {
             }
 
             const result = await response.json();
-            await loadData();
             setShowPaymentModal(false);
             setPaymentEntry(null);
+
+            // Refresh in the background so the success UX is immediate.
+            loadData();
 
             const emailWarning = result.emailNotification?.warning;
             const message = result.message || 'Payment recorded successfully';
@@ -894,10 +897,12 @@ const DLA = ({ openNew }) => {
 
             const result = await response.json();
             console.log('Batch payment result:', JSON.stringify(result));
-            await loadData();
             setShowBulkPaymentModal(false);
             setSelectedEntries(new Set());
             setSelectMode(false);
+
+            // Refresh in the background so the success UX is immediate.
+            loadData();
 
             const successCount = result.success?.length || 0;
             const errorCount = result.errors?.length || 0;

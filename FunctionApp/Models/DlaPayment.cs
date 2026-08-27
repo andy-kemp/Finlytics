@@ -43,6 +43,8 @@ namespace FinanceHubFunctions.Models
         public DateTime PaymentDate { get; set; }
         public string? PaymentMethod { get; set; }
         public string? Notes { get; set; }
+        public bool SendEmail { get; set; } = false;
+        public string? RecipientEmail { get; set; }
     }
 
     public class DlaBatchPaymentRequest

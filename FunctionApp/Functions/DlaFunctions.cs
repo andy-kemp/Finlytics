@@ -843,8 +843,7 @@ namespace FinanceHubFunctions.Functions
 
             try
             {
-                var dlaEntries = await _dlaRepository.GetAllAsync();
-                var dlaEntry = dlaEntries.FirstOrDefault(d => d.DlaId == dlaId);
+                var dlaEntry = await _dlaRepository.GetByDlaIdAsync(dlaId);
 
                 if (dlaEntry == null)
                 {
@@ -936,9 +935,15 @@ namespace FinanceHubFunctions.Functions
                 try
                 {
                     var settings = await _companySettingsRepository.GetDefaultAsync();
-                    var recipientEmail = ResolveDlaNotificationRecipient(settings);
+                    var recipientEmail = string.IsNullOrWhiteSpace(paymentData.RecipientEmail)
+                        ? ResolveDlaNotificationRecipient(settings)
+                        : paymentData.RecipientEmail.Trim();
                     emailRecipient = recipientEmail;
-                    if (!string.IsNullOrWhiteSpace(recipientEmail))
+                    if (!paymentData.SendEmail)
+                    {
+                        _logger.LogInformation("DLA payment confirmation email skipped for {DlaId}: sendEmail=false", dlaEntry.DlaId);
+                    }
+                    else if (!string.IsNullOrWhiteSpace(recipientEmail))
                     {
                         emailAttempted = true;
                         var csvLines = new List<string> { "DLA ID,Director,Description,Amount,Payment Date,Payment Method,Reference" };

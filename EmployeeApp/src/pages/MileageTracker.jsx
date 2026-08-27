@@ -28,6 +28,10 @@ export default function MileageTracker() {
 
   const pct = tracker.percentUsed || 0
   const barColor = pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#10b981'
+  const rateBelow = tracker.rateBelow ?? 0.55
+  const rateAbove = tracker.rateAbove ?? 0.25
+  const rateBelowPence = Math.round(rateBelow * 100)
+  const rateAbovePence = Math.round(rateAbove * 100)
 
   return (
     <div className="page">
@@ -68,7 +72,7 @@ export default function MileageTracker() {
         </div>
         <div className="detail-card">
           <div className="detail-value">{tracker.remainingMilesAt45p?.toLocaleString()}</div>
-          <div className="detail-label">Remaining at 45p</div>
+          <div className="detail-label">Remaining at {rateBelowPence}p</div>
         </div>
       </div>
 
@@ -82,14 +86,14 @@ export default function MileageTracker() {
             <tr>
               <td>First 10,000</td>
               <td>{tracker.milesAt45p?.toLocaleString()}</td>
-              <td>45p</td>
-              <td>£{((tracker.milesAt45p || 0) * 0.45).toFixed(2)}</td>
+              <td>{rateBelowPence}p</td>
+              <td>£{((tracker.milesAt45p || 0) * rateBelow).toFixed(2)}</td>
             </tr>
             <tr className={tracker.isOver10k ? 'active-rate' : 'inactive-rate'}>
               <td>Over 10,000</td>
               <td>{tracker.milesAt25p?.toLocaleString()}</td>
-              <td>25p</td>
-              <td>£{((tracker.milesAt25p || 0) * 0.25).toFixed(2)}</td>
+              <td>{rateAbovePence}p</td>
+              <td>£{((tracker.milesAt25p || 0) * rateAbove).toFixed(2)}</td>
             </tr>
           </tbody>
           <tfoot>
@@ -103,12 +107,12 @@ export default function MileageTracker() {
 
       {tracker.isOver10k && (
         <div className="rate-warning-banner">
-          ⚠️ You've exceeded 10,000 miles this tax year. Additional miles are now reimbursed at <strong>25p/mile</strong> instead of 45p/mile.
+          ⚠️ You've exceeded 10,000 miles this tax year. Additional miles are now reimbursed at <strong>{rateAbovePence}p/mile</strong> instead of {rateBelowPence}p/mile.
         </div>
       )}
 
       <div className="remaining-card">
-        <h3>Remaining Allowance at 45p</h3>
+        <h3>Remaining Allowance at {rateBelowPence}p</h3>
         <div className="remaining-value">
           {tracker.remainingMilesAt45p?.toLocaleString()} miles = <strong>£{tracker.remainingValueAt45p?.toFixed(2)}</strong>
         </div>

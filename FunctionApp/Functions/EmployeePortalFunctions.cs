@@ -19,6 +19,11 @@ namespace FinanceHubFunctions.Functions
     /// </summary>
     public class EmployeePortalFunctions
     {
+        private const decimal DefaultRate45p = 0.45m;
+        private const decimal DefaultRate55p = 0.55m;
+        private const decimal DefaultRate25p = 0.25m;
+        private const decimal DefaultThresholdMiles = 10000m;
+
         private readonly ClerkAuthService _clerkAuth;
         private readonly ITeamMemberRepository _teamMemberRepo;
         private readonly IExpenseRepository _expenseRepo;
@@ -431,7 +436,9 @@ namespace FinanceHubFunctions.Functions
                 var cumulativeMiles = await _mileageRepo.GetCumulativeMilesByTaxYearAsync(trip.Director, trip.TaxYear);
                 var totalMiles = trip.IsReturn ? trip.Miles * 2 : trip.Miles;
                 trip.Miles = totalMiles;
-                CalculateAmapRates(trip, totalMiles, cumulativeMiles);
+                var companySettings = await _companySettingsRepo.GetDefaultAsync();
+                var (rateBelow, rateAbove, threshold) = ResolveAmapSettings(companySettings, trip.TaxYear);
+                CalculateAmapRates(trip, totalMiles, cumulativeMiles, threshold, rateBelow, rateAbove);
 
                 var created = await _mileageRepo.CreateAsync(trip);
 
@@ -470,9 +477,8 @@ namespace FinanceHubFunctions.Functions
             var approvedMiles = myTrips.Where(t => t.ApprovalStatus == "Approved").Sum(t => t.Miles);
             var pendingMiles = myTrips.Where(t => t.ApprovalStatus == "Submitted").Sum(t => t.Miles);
 
-            const decimal threshold = 10000m;
-            const decimal rateBelow = 0.45m;
-            const decimal rateAbove = 0.25m;
+            var companySettings = await _companySettingsRepo.GetDefaultAsync();
+            var (rateBelow, rateAbove, threshold) = ResolveAmapSettings(companySettings, currentTaxYear);
 
             var milesAt45p = Math.Min(approvedMiles, threshold);
             var milesAt25p = Math.Max(approvedMiles - threshold, 0m);
@@ -591,12 +597,33 @@ namespace FinanceHubFunctions.Functions
             return CalculateTaxYear(date);
         }
 
-        private static void CalculateAmapRates(MileageTrip trip, decimal miles, decimal cumulativeBefore)
+        private static decimal DefaultPrimaryRateForTaxYear(string taxYear)
         {
-            const decimal threshold = 10000m;
-            const decimal rate45 = 0.45m;
-            const decimal rate25 = 0.25m;
+            var startYearText = taxYear.Split('/').FirstOrDefault();
+            if (int.TryParse(startYearText, out var startYear) && startYear >= 2026)
+                return DefaultRate55p;
 
+            return DefaultRate45p;
+        }
+
+        private static (decimal rateBelow, decimal rateAbove, decimal threshold) ResolveAmapSettings(CompanySettings settings, string taxYear)
+        {
+            var defaultRateBelow = DefaultPrimaryRateForTaxYear(taxYear);
+            return (
+                settings?.AmapRate45p ?? defaultRateBelow,
+                settings?.AmapRate25p ?? DefaultRate25p,
+                settings?.AmapThresholdMiles ?? DefaultThresholdMiles
+            );
+        }
+
+        private static void CalculateAmapRates(
+            MileageTrip trip,
+            decimal miles,
+            decimal cumulativeBefore,
+            decimal threshold,
+            decimal rate45,
+            decimal rate25)
+        {
             if (cumulativeBefore >= threshold)
             {
                 trip.MilesAt45p = 0;

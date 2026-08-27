@@ -104,7 +104,7 @@ const CompanyDetails = () => {
                     companyInceptionDate: data.companyInceptionDate || '',
                     fyStartMonth: data.fyStartMonth || '',
                     fyStartDay: data.fyStartDay || '',
-                    amapRate45p: data.amapRate45p ?? 0.45,
+                    amapRate45p: data.amapRate45p ?? 0.55,
                     amapRate25p: data.amapRate25p ?? 0.25,
                     amapThresholdMiles: data.amapThresholdMiles ?? 10000
                 };
@@ -470,7 +470,7 @@ const CompanyDetails = () => {
 
                 <h2>HMRC Mileage Allowance (AMAP) Rates</h2>
                 <div style={{marginBottom: '1rem', padding: '0.75rem', backgroundColor: '#e7f3ff', borderRadius: '4px', fontSize: '0.9rem'}}>
-                    <strong>ℹ️ HMRC AMAP rates:</strong> Currently 45p/mile for first 10,000 business miles, then 25p/mile. Update here if HMRC changes the rates.
+                    <strong>ℹ️ HMRC AMAP rates:</strong> Use 55p/mile for the first 10,000 business miles from tax year 2026/27, then 25p/mile over the threshold. Update here if HMRC changes the rates.
                 </div>
                 <div className="form-row">
                     <div className="form-group">
@@ -483,9 +483,9 @@ const CompanyDetails = () => {
                             step="0.01"
                             min="0"
                             max="1"
-                            placeholder="0.45"
+                            placeholder="0.55"
                         />
-                        <small style={{color: '#666', fontSize: '0.85rem'}}>Default: 0.45 (45p/mile)</small>
+                        <small style={{color: '#666', fontSize: '0.85rem'}}>Default: 0.55 (55p/mile)</small>
                     </div>
                     <div className="form-group">
                         <label>Rate — Over threshold (£/mile)</label>

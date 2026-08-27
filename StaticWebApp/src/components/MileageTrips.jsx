@@ -20,6 +20,11 @@ function currentTaxYear() {
     return `${startYear}/${String((startYear + 1) % 100).padStart(2, '0')}`;
 }
 
+function defaultPrimaryRateForTaxYear(taxYear) {
+    const startYear = Number(String(taxYear || '').split('/')[0]);
+    return Number.isFinite(startYear) && startYear >= 2026 ? 0.55 : 0.45;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper: build a Google Maps directions URL from two address strings
 // ─────────────────────────────────────────────────────────────────────────────
@@ -299,6 +304,10 @@ const MileageTrips = ({ openNew }) => {
     // ── render helpers ─────────────────────────────────────────────────────────
     const fmtCcy = (n) => `£${(n ?? 0).toFixed(2)}`;
     const fmtMi  = (n) => `${(n ?? 0).toFixed(1)} mi`;
+    const primaryRate = summary?.rate45p ?? companySettings?.amapRate45p ?? defaultPrimaryRateForTaxYear(taxYear);
+    const secondaryRate = summary?.rate25p ?? companySettings?.amapRate25p ?? 0.25;
+    const primaryRateLabel = `${Math.round(primaryRate * 100)}p`;
+    const secondaryRateLabel = `${Math.round(secondaryRate * 100)}p`;
 
     const statusBadge = (status) => {
         const labels  = { Draft: 'Unclaimed', Claimed: 'Claimed', Posted: 'Posted', Paid: 'Paid' };
@@ -363,8 +372,8 @@ const MileageTrips = ({ openNew }) => {
                     <h2>🚗 Mileage Allowance</h2>
                     <p style={{ margin: 0, fontSize: 13, color: '#6c757d' }}>
                         {summary
-                            ? `HMRC MAP — ${Math.round((summary.rate45p ?? 0.45) * 100)}p/mile (first ${(summary.thresholdMiles ?? 10000).toLocaleString()}) · ${Math.round((summary.rate25p ?? 0.25) * 100)}p/mile (over ${(summary.thresholdMiles ?? 10000).toLocaleString()}) per tax year`
-                            : 'HMRC MAP — 45p/mile (first 10,000) · 25p/mile (over 10,000) per tax year'
+                            ? `HMRC MAP — ${primaryRateLabel}/mile (first ${(summary.thresholdMiles ?? 10000).toLocaleString()}) · ${secondaryRateLabel}/mile (over ${(summary.thresholdMiles ?? 10000).toLocaleString()}) per tax year`
+                            : `HMRC MAP — ${primaryRateLabel}/mile (first 10,000) · ${secondaryRateLabel}/mile (over 10,000) per tax year`
                         }
                     </p>
                 </div>
@@ -402,11 +411,11 @@ const MileageTrips = ({ openNew }) => {
                         <div className="summary-value">{fmtMi(summary.totalMiles)}</div>
                     </div>
                     <div className="summary-card">
-                        <div className="summary-label">At 45p/mile</div>
+                        <div className="summary-label">At {primaryRateLabel}/mile</div>
                         <div className="summary-value">{fmtMi(summary.milesAt45p)}</div>
                     </div>
                     <div className="summary-card">
-                        <div className="summary-label">At 25p/mile</div>
+                        <div className="summary-label">At {secondaryRateLabel}/mile</div>
                         <div className="summary-value">{fmtMi(summary.milesAt25p)}</div>
                     </div>
                     <div className="summary-card" style={{ borderLeft: '4px solid #198754' }}>
@@ -465,8 +474,8 @@ const MileageTrips = ({ openNew }) => {
                                         <th>Director</th>
                                         <th>Route</th>
                                         <th>Miles</th>
-                                        <th>45p</th>
-                                        <th>25p</th>
+                                        <th>{primaryRateLabel}</th>
+                                        <th>{secondaryRateLabel}</th>
                                         <th>Amount</th>
                                         <th>Purpose</th>
                                         <th>Status</th>
@@ -625,7 +634,7 @@ const MileageTrips = ({ openNew }) => {
                                                         Submit → DLA
                                                     </button>
                                                 )}
-                                                {(claim.status === 'Posted' || claim.status === 'Submitted') && (
+                                                {(claim.status === 'Posted' || claim.status === 'Submitted' || claim.status === 'Claimed') && (
                                                     <button
                                                         className="btn-secondary"
                                                         style={{ fontSize: 12, padding: '4px 10px' }}
@@ -702,8 +711,8 @@ const MileageTrips = ({ openNew }) => {
                                     <div style={{ fontSize: 11, color: '#6c757d', fontWeight: 600, textTransform: 'uppercase', marginBottom: 2 }}>Allowance</div>
                                     <div style={{ fontWeight: 700, fontSize: 16, color: '#198754' }}>{fmtCcy(viewingTrip.totalAmount)}</div>
                                     <div style={{ fontSize: 11, color: '#6c757d' }}>
-                                        {viewingTrip.milesAt45p > 0 && `${fmtMi(viewingTrip.milesAt45p)} @ 45p`}
-                                        {viewingTrip.milesAt25p > 0 && ` + ${fmtMi(viewingTrip.milesAt25p)} @ 25p`}
+                                        {viewingTrip.milesAt45p > 0 && `${fmtMi(viewingTrip.milesAt45p)} @ ${primaryRateLabel}`}
+                                        {viewingTrip.milesAt25p > 0 && ` + ${fmtMi(viewingTrip.milesAt25p)} @ ${secondaryRateLabel}`}
                                     </div>
                                 </div>
                                 <div>
@@ -880,7 +889,7 @@ const MileageTrips = ({ openNew }) => {
                                         const total  = computedMiles();
                                         const prior  = summary.totalMiles ?? 0;
                                         const thresh = companySettings?.amapThresholdMiles ?? summary?.thresholdMiles ?? 10000;
-                                        const r45    = companySettings?.amapRate45p ?? summary?.rate45p ?? 0.45;
+                                        const r45    = companySettings?.amapRate45p ?? summary?.rate45p ?? defaultPrimaryRateForTaxYear(taxYear);
                                         const r25    = companySettings?.amapRate25p ?? summary?.rate25p ?? 0.25;
                                         const rem45  = Math.max(0, thresh - prior);
                                         const at45   = Math.min(total, rem45);

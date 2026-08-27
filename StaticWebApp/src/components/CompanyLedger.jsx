@@ -13,6 +13,7 @@ import {
 import { calculateDlaCompliance } from '../services/dlaRules';
 
 const CompanyLedger = () => {
+    const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_BASE_URL || 'https://financehub-func-kemponline.azurewebsites.net/api';
     const [entries, setEntries] = useState([]);
     const [aggregates, setAggregates] = useState(null);
     const [dashboardMetrics, setDashboardMetrics] = useState(null);
@@ -433,7 +434,7 @@ const CompanyLedger = () => {
                 notes: repayData.notes
             };
 
-            const response = await fetch(`https://financehub-func-kemponline.azurewebsites.net/api/dla/${repayData.dlaId}/payment`, {
+            const response = await fetch(`${API_BASE}/dla/${repayData.dlaId}/payment`, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify(payload)
@@ -485,7 +486,7 @@ const CompanyLedger = () => {
                 paymentMethod: bulkDlaPaymentData.paymentMethod || null,
                 notes: bulkDlaPaymentData.notes || null
             };
-            const response = await fetch('https://financehub-func-kemponline.azurewebsites.net/api/dla/batch-payment', {
+            const response = await fetch(`${API_BASE}/dla/batch-payment`, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify(payload)
