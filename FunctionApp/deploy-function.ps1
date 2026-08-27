@@ -2,6 +2,8 @@
 $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $configFile = Join-Path $scriptRoot "..\finance-hub-config.ini"
+$fallbackConfigFile = Join-Path $scriptRoot "..\Archive-SharePoint\finance-hub-config.ini"
+$jsonConfigFile = Join-Path $scriptRoot "..\deployment-config-kemponline.json"
 
 function Get-IniContent {
     param([string]$Path)
@@ -23,7 +25,34 @@ function Get-IniContent {
     return $ini
 }
 
-$config = Get-IniContent -Path $configFile
+$config = $null
+if (Test-Path $jsonConfigFile) {
+    $json = Get-Content -Raw -Path $jsonConfigFile | ConvertFrom-Json
+    if ($null -ne $json -and $null -ne $json.ResourceGroup -and $null -ne $json.Resources.FunctionApp) {
+        $config = @{
+            Azure = @{
+                ResourceGroup = $json.ResourceGroup
+                FunctionAppName = $json.Resources.FunctionApp
+                StorageAccountName = $json.Resources.StorageAccount
+            }
+            FunctionApp = @{
+                FunctionAppUrl = "https://$($json.Resources.FunctionApp).azurewebsites.net"
+            }
+        }
+    }
+}
+
+if ($null -eq $config) {
+    $config = Get-IniContent -Path $configFile
+    if (-not $config.ContainsKey('Azure') -or -not $config['Azure'].ContainsKey('ResourceGroup') -or -not $config['Azure'].ContainsKey('FunctionAppName')) {
+        $config = Get-IniContent -Path $fallbackConfigFile
+    }
+}
+
+if (-not $config.ContainsKey('Azure') -or -not $config['Azure'].ContainsKey('ResourceGroup') -or -not $config['Azure'].ContainsKey('FunctionAppName')) {
+    Write-Host "✗ Missing deployment config for Function App (ResourceGroup/FunctionAppName)" -ForegroundColor Red
+    exit 1
+}
 
 $resourceGroup = $config['Azure']['ResourceGroup']
 $functionAppName = $config['Azure']['FunctionAppName']
@@ -72,5 +101,7 @@ Remove-Item ./publish -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item ./deploy.zip -Force -ErrorAction SilentlyContinue
 
 Write-Host ""
-Write-Host "Function App URL: $($config['FunctionApp']['FunctionAppUrl'])" -ForegroundColor Cyan
+if ($config.ContainsKey('FunctionApp') -and $config['FunctionApp'].ContainsKey('FunctionAppUrl')) {
+    Write-Host "Function App URL: $($config['FunctionApp']['FunctionAppUrl'])" -ForegroundColor Cyan
+}
 Write-Host ""
