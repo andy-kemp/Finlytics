@@ -1,6 +1,8 @@
 $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $configFile = Join-Path $scriptRoot "..\finance-hub-config.ini"
+$fallbackConfigFile = Join-Path $scriptRoot "..\Archive-SharePoint\finance-hub-config.ini"
+$jsonConfigFile = Join-Path $scriptRoot "..\deployment-config-kemponline.json"
 $workflowFile = Join-Path $scriptRoot "workflow.json"
 
 function Get-IniContent {
@@ -23,11 +25,48 @@ function Get-IniContent {
     return $ini
 }
 
-$config = Get-IniContent -Path $configFile
+$config = $null
+if (Test-Path $jsonConfigFile) {
+    $json = Get-Content -Raw -Path $jsonConfigFile | ConvertFrom-Json
+    if ($null -ne $json -and $null -ne $json.ResourceGroup -and $null -ne $json.Location) {
+        $config = @{
+            Azure = @{
+                ResourceGroup = $json.ResourceGroup
+                Location = $json.Location
+                LogicAppName = $json.Resources.LogicApp
+            }
+        }
+    }
+}
+
+if ($null -eq $config) {
+    $config = Get-IniContent -Path $configFile
+    if (-not $config.ContainsKey('Azure') -or -not $config['Azure'].ContainsKey('ResourceGroup') -or -not $config['Azure'].ContainsKey('Location')) {
+        $config = Get-IniContent -Path $fallbackConfigFile
+    }
+}
 
 $resourceGroup = $config['Azure']['ResourceGroup']
 $logicAppName = $config['Azure']['LogicAppName']
 $location = $config['Azure']['Location']
+
+if ([string]::IsNullOrWhiteSpace($resourceGroup) -or [string]::IsNullOrWhiteSpace($location)) {
+    Write-Host "Skipping Logic App deployment: missing ResourceGroup/Location config" -ForegroundColor Yellow
+    exit 0
+}
+
+if ([string]::IsNullOrWhiteSpace($logicAppName)) {
+    try {
+        $logicAppName = az logic workflow list --resource-group $resourceGroup --query "[0].name" --output tsv 2>$null
+    } catch {
+        $logicAppName = ""
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($logicAppName)) {
+    Write-Host "Skipping Logic App deployment: no Logic App name configured or discovered" -ForegroundColor Yellow
+    exit 0
+}
 
 Write-Host "Deploying Logic App workflow: $logicAppName..." -ForegroundColor Yellow
 
