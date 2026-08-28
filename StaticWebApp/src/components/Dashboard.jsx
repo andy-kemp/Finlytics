@@ -9,6 +9,7 @@ import {
     getCompanySettings,
     getVatReturns,
     getDlaEntries,
+    getAllDlaPayments,
     getBillsSummary,
     getPayrollSettings,
     getPayrollRuns
@@ -142,13 +143,14 @@ export default function Dashboard({ onNavigate }) {
             if (metrics) { setRefreshing(true); } else { setLoading(true); }
             
             // Fire all fetches in parallel — no sequential waterfalls
-            const [invoicesRaw, expensesRaw, companyAggregates, settings, filedReturnsRaw, dlaEntriesRaw, ytdAggregates, billsSummary, payrollSettings, payrollRunsRaw] = await Promise.all([
+            const [invoicesRaw, expensesRaw, companyAggregates, settings, filedReturnsRaw, dlaEntriesRaw, dlaPaymentsRaw, ytdAggregates, billsSummary, payrollSettings, payrollRunsRaw] = await Promise.all([
                 getInvoices(),
                 getExpenses(),
                 getCompanyAggregates(getCurrentPeriodKey()).catch(() => ({})),
                 getCompanySettings().catch(() => null),
                 getVatReturns().catch(() => []),
                 getDlaEntries().catch(() => []),
+                getAllDlaPayments().catch(() => []),
                 getYtdAggregates().catch(() => ({})),
                 getBillsSummary().catch(() => null),
                 getPayrollSettings().catch(() => null),
@@ -159,6 +161,7 @@ export default function Dashboard({ onNavigate }) {
             const expenses = Array.isArray(expensesRaw) ? expensesRaw : [];
             const filedReturns = Array.isArray(filedReturnsRaw) ? filedReturnsRaw : [];
             const dlaEntries = Array.isArray(dlaEntriesRaw) ? dlaEntriesRaw : [];
+            const dlaPayments = Array.isArray(dlaPaymentsRaw) ? dlaPaymentsRaw : [];
             const payrollRuns = Array.isArray(payrollRunsRaw) ? payrollRunsRaw : [];
 
             setCompanySettings(settings);
@@ -210,6 +213,21 @@ export default function Dashboard({ onNavigate }) {
                 ...e,
                 entryDate: e.entryDate || e.datePaid
             })), 'entryDate', settings);
+
+            // For cash balance/cash flow, prioritize actual payment dates.
+            const periodCashExpenses = filterByDateRange(
+                expenses
+                    .filter(e => !e.isDLA)
+                    .map(e => ({ ...e, cashDate: e.datePaid || e.entryDate })),
+                'cashDate',
+                settings
+            );
+
+            const periodDlaPayments = filterByDateRange(
+                dlaPayments.map(p => ({ ...p, cashDate: p.paymentDate })),
+                'cashDate',
+                settings
+            );
             const periodDlaEntries = (() => {
                 const owedToDir = dlaEntries.filter(e => e.direction === 'OwedToDirector');
                 const { startDate, endDate } = getDateRange(settings);
@@ -235,6 +253,7 @@ export default function Dashboard({ onNavigate }) {
 
             const expenseGross = periodExpenses.reduce((sum, exp) => sum + (exp.amountGross || 0), 0);
             const expenseNet = periodExpenses.reduce((sum, exp) => sum + (exp.amountNet || 0), 0);
+            const expenseCashOut = periodCashExpenses.reduce((sum, exp) => sum + (exp.amountGross || 0), 0);
             const expenseVAT = periodExpenses
                 .filter(exp => !isVatBlocked(exp))
                 .reduce((sum, exp) => sum + (exp.vatAmount || 0), 0);
@@ -290,8 +309,9 @@ export default function Dashboard({ onNavigate }) {
 
             // DLA gross (OwedToDirector) in the selected period — real liability / outflow
             const periodDlaGross = periodDlaEntries.reduce((sum, e) => sum + (e.amountGross || 0), 0);
+            const periodDlaPaidOut = periodDlaPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
 
-            const currentBalance = income - expenseGross - periodDlaGross - salary - (ytdAggregates?.payeRemitted || 0) - 
+            const currentBalance = income - expenseCashOut - periodDlaPaidOut - salary - (ytdAggregates?.payeRemitted || 0) - 
                                    employeeNI - employerNI - corpTaxPaid - (ytdAggregates?.dividendsPaid || 0);
 
             setMetrics({
@@ -341,9 +361,10 @@ export default function Dashboard({ onNavigate }) {
                     .reduce((sum, inv) => sum + (inv.amountGross || 0), 0),
                 // Cash flow summary (includes DLA as a real liability / outflow)
                 periodDlaGross,
+                periodDlaPaidOut,
                 cashFlowIn: income,
-                cashFlowOut: expenseGross + periodDlaGross + salary + (ytdAggregates?.payeRemitted || 0) + employeeNI + employerNI + corpTaxPaid + (ytdAggregates?.dividendsPaid || 0),
-                cashFlowNet: income - expenseGross - periodDlaGross - salary - (ytdAggregates?.payeRemitted || 0) - employeeNI - employerNI - corpTaxPaid - (ytdAggregates?.dividendsPaid || 0)
+                cashFlowOut: expenseCashOut + periodDlaPaidOut + salary + (ytdAggregates?.payeRemitted || 0) + employeeNI + employerNI + corpTaxPaid + (ytdAggregates?.dividendsPaid || 0),
+                cashFlowNet: income - expenseCashOut - periodDlaPaidOut - salary - (ytdAggregates?.payeRemitted || 0) - employeeNI - employerNI - corpTaxPaid - (ytdAggregates?.dividendsPaid || 0)
             });
 
             // ── Upcoming Deadlines ──────────────────────────────────────────
