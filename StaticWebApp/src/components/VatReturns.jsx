@@ -17,6 +17,12 @@ import {
     viewHmrcVatReturn
 } from '../services/apiService';
 
+const VAT_ADJUSTMENTS_STORAGE_KEY = 'finlytics.vatQuarterAdjustments.v1';
+
+function getQuarterKey(q) {
+    return new Date(q.quarterStartDate).toISOString().slice(0, 10);
+}
+
 // ── Quarter helpers ──────────────────────────────────────────────────────────
 
 /**
@@ -103,6 +109,7 @@ export default function VatReturns() {
     const [editSubmitting, setEditSubmitting] = useState(false);
 
     const [showAllYears, setShowAllYears] = useState(false);
+    const [quarterAdjustments, setQuarterAdjustments] = useState({});
 
     // PDF confirmation upload state
     const [pdfModal, setPdfModal]               = useState(null); // { quarter, filed } or null
@@ -161,6 +168,79 @@ export default function VatReturns() {
 
     useEffect(() => { loadData(); }, [loadData]);
 
+    useEffect(() => {
+        try {
+            const raw = localStorage.getItem(VAT_ADJUSTMENTS_STORAGE_KEY);
+            if (!raw) return;
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object') setQuarterAdjustments(parsed);
+        } catch {
+            // Ignore malformed persisted data
+        }
+    }, []);
+
+    const persistQuarterAdjustments = (next) => {
+        setQuarterAdjustments(next);
+        localStorage.setItem(VAT_ADJUSTMENTS_STORAGE_KEY, JSON.stringify(next));
+    };
+
+    const getQuarterAdjustment = (q) => {
+        const key = getQuarterKey(q);
+        const existing = quarterAdjustments[key] || {};
+        return {
+            box1: Number(existing.box1) || 0,
+            box4: Number(existing.box4) || 0,
+            note: (existing.note || '').trim()
+        };
+    };
+
+    const hasQuarterAdjustment = (q) => {
+        const a = getQuarterAdjustment(q);
+        return Math.abs(a.box1) > 0.000001 || Math.abs(a.box4) > 0.000001 || !!a.note;
+    };
+
+    const configureQuarterAdjustment = (q) => {
+        const current = getQuarterAdjustment(q);
+        const box1Raw = window.prompt(
+            `Adjustment for ${q.quarterLabel} (${q.monthsLabel})\nBox 1 adjustment (+/-). Use 0 for none.`,
+            String(current.box1 || 0)
+        );
+        if (box1Raw === null) return;
+
+        const box4Raw = window.prompt(
+            `Adjustment for ${q.quarterLabel} (${q.monthsLabel})\nBox 4 adjustment (+/-). Use 0 for none.`,
+            String(current.box4 || 0)
+        );
+        if (box4Raw === null) return;
+
+        const noteRaw = window.prompt(
+            'Short reason (e.g. Q1 correction carried into this return):',
+            current.note || ''
+        );
+        if (noteRaw === null) return;
+
+        const box1 = Number.parseFloat(box1Raw);
+        const box4 = Number.parseFloat(box4Raw);
+        if (Number.isNaN(box1) || Number.isNaN(box4)) {
+            showToast('Adjustment values must be valid numbers', 'error');
+            return;
+        }
+
+        const key = getQuarterKey(q);
+        const next = { ...quarterAdjustments };
+        const note = noteRaw.trim();
+        if (Math.abs(box1) < 0.000001 && Math.abs(box4) < 0.000001 && !note) {
+            delete next[key];
+            persistQuarterAdjustments(next);
+            showToast(`${q.quarterLabel} adjustment removed`);
+            return;
+        }
+
+        next[key] = { box1, box4, note };
+        persistQuarterAdjustments(next);
+        showToast(`${q.quarterLabel} adjustment saved`);
+    };
+
     // Check HMRC connection status on mount + handle OAuth callback redirect
     useEffect(() => {
         getHmrcStatus()
@@ -200,6 +280,7 @@ export default function VatReturns() {
 
     const exportVatCsv = (q) => {
         const calc = calcForQuarter(q);
+        const adjustment = getQuarterAdjustment(q);
         const start = new Date(q.quarterStartDate);
         const end   = new Date(q.quarterEndDate);
         const label = q.quarterLabel.replace(/\//g, '-');
@@ -258,6 +339,10 @@ export default function VatReturns() {
             ['Quarter End', q.quarterEndDate],
             ['Generated', new Date().toISOString().slice(0, 10)],
             ['', ''],
+            ['Adjustment Box 1', adjustment.box1.toFixed(2)],
+            ['Adjustment Box 4', adjustment.box4.toFixed(2)],
+            ['Adjustment Note', adjustment.note || ''],
+            ['', ''],
             ['Box', 'Description', 'Amount (£)'],
             ['Box 1', 'VAT due on sales and other outputs', box1.toFixed(2)],
             ['Box 2', 'VAT due on acquisitions from EC members', box2.toFixed(2)],
@@ -277,9 +362,25 @@ export default function VatReturns() {
             ['VAT Return Supporting Transactions', ''],
             ['Quarter', q.quarterLabel],
             ['Period', q.monthsLabel],
+            ['Adjustment Box 1', adjustment.box1.toFixed(2)],
+            ['Adjustment Box 4', adjustment.box4.toFixed(2)],
+            ['Adjustment Note', adjustment.note || ''],
             ['', ''],
             ['Type', 'Date', 'Description', 'Reference', 'Net (£)', 'VAT (£)', 'Gross (£)', 'VAT Direction'],
         ];
+
+        if (Math.abs(adjustment.box1) > 0.000001 || Math.abs(adjustment.box4) > 0.000001 || adjustment.note) {
+            txRows.push([
+                'Manual Adjustment',
+                new Date().toISOString().slice(0, 10),
+                adjustment.note || 'Prior period correction',
+                'ADJUSTMENT',
+                '',
+                (adjustment.box1 - adjustment.box4).toFixed(2),
+                '',
+                'Applied to VAT boxes'
+            ]);
+        }
 
         // Sales invoices
         invoices.forEach(inv => {
@@ -485,9 +586,24 @@ export default function VatReturns() {
         ];
         const vatExcludedTotal = vatExcludedItems.reduce((s, e) => s + (e.vatAmount || 0), 0);
 
-        const vatOut  = vatOutExpenses + vatOutDla;
-        const vatOwed = vatIn - vatOut;
-        return { vatIn, vatOut, vatOutExpenses, vatOutDla, vatOwed, isOldestDisplayedQuarter, vatExcludedItems, vatExcludedTotal };
+        const adjustment = getQuarterAdjustment(q);
+        const vatInAdjusted = vatIn + adjustment.box1;
+        const vatOutBase = vatOutExpenses + vatOutDla;
+        const vatOutAdjusted = vatOutBase + adjustment.box4;
+        const vatOwed = vatInAdjusted - vatOutAdjusted;
+        return {
+            vatIn: vatInAdjusted,
+            vatOut: vatOutAdjusted,
+            vatInBase: vatIn,
+            vatOutBase,
+            adjustment,
+            vatOutExpenses,
+            vatOutDla,
+            vatOwed,
+            isOldestDisplayedQuarter,
+            vatExcludedItems,
+            vatExcludedTotal
+        };
     };
 
     const getFiledForQuarter = (q) => {
@@ -611,7 +727,12 @@ export default function VatReturns() {
                 vatOwed:           filingCalc.vatOwed,
                 filedDate:         filingDate ? new Date(filingDate).toISOString() : new Date().toISOString(),
                 reference:         filingRef,
-                notes:             filingNotes
+                notes:             [
+                    filingNotes,
+                    (Math.abs((filingCalc.adjustment?.box1 || 0)) > 0.000001 || Math.abs((filingCalc.adjustment?.box4 || 0)) > 0.000001 || (filingCalc.adjustment?.note || ''))
+                        ? `Adjustment B1=${(filingCalc.adjustment?.box1 || 0).toFixed(2)}, B4=${(filingCalc.adjustment?.box4 || 0).toFixed(2)}${filingCalc.adjustment?.note ? `; ${filingCalc.adjustment.note}` : ''}`
+                        : ''
+                ].filter(Boolean).join(' | ')
             });
             showToast(`${filingQuarter.quarterLabel} marked as filed ✓`);
             setShowFileModal(false);
@@ -908,19 +1029,25 @@ export default function VatReturns() {
                             const due = vatPaymentDue(overdueQ.quarterEndDate);
                             const isOverdue = now > due;
                             const calc = calcForQuarter(overdueQ);
+                            const hasAdjustment = hasQuarterAdjustment(overdueQ);
                             return (
                                 <div style={{
-                                    background: isOverdue ? '#f8d7da' : '#fff3cd',
-                                    border: `1px solid ${isOverdue ? '#f5c6cb' : '#ffc107'}`,
+                                    background: (isOverdue && !hasAdjustment) ? '#f8d7da' : '#fff3cd',
+                                    border: `1px solid ${(isOverdue && !hasAdjustment) ? '#f5c6cb' : '#ffc107'}`,
                                     borderRadius: 8, padding: '10px 16px',
                                     display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap'
                                 }}>
-                                    <span style={{ fontSize: 18 }}>{isOverdue ? '🔴' : '⚠️'}</span>
+                                    <span style={{ fontSize: 18 }}>{(isOverdue && !hasAdjustment) ? '🔴' : '🟠'}</span>
                                     <div style={{ flex: 1 }}>
                                         <strong>{overdueQ.quarterLabel}</strong> ({overdueQ.monthsLabel}) — not yet filed
-                                        <span style={{ marginLeft: 12, color: isOverdue ? '#721c24' : '#856404', fontWeight: 600 }}>
+                                        <span style={{ marginLeft: 12, color: (isOverdue && !hasAdjustment) ? '#721c24' : '#856404', fontWeight: 600 }}>
                                             · Payment {isOverdue ? 'was due' : 'due'} {fmtDate(due)}
                                         </span>
+                                        {hasAdjustment && (
+                                            <span style={{ marginLeft: 12, color: '#856404', fontWeight: 600 }}>
+                                                · Amendment queued
+                                            </span>
+                                        )}
                                         {calc.vatOwed > 0 && (
                                             <span style={{ marginLeft: 12, color: '#6c757d' }}>
                                                 · {fmt(calc.vatOwed)} estimated owed
@@ -1183,6 +1310,7 @@ export default function VatReturns() {
                                 const calc   = calcForQuarter(q);
                                 const filed  = getFiledForQuarter(q);
                                 const isCurr = isCurrentQuarter(q);
+                                const hasAdjustment = hasQuarterAdjustment(q);
 
                                 return (
                                     <tr key={q.quarterLabel} style={{
@@ -1237,6 +1365,13 @@ export default function VatReturns() {
                                                     fontSize: '0.82rem', whiteSpace: 'nowrap',
                                                     display: 'inline-block'
                                                 }}>In Progress</span>
+                                            ) : hasAdjustment ? (
+                                                <span style={{
+                                                    background: '#fff3cd', color: '#856404',
+                                                    padding: '3px 10px', borderRadius: 12,
+                                                    fontSize: '0.82rem', fontWeight: 600,
+                                                    whiteSpace: 'nowrap', display: 'inline-block'
+                                                }}>🟠 Amended</span>
                                             ) : (
                                                 <span style={{
                                                     background: '#f8d7da', color: '#721c24',
@@ -1340,6 +1475,14 @@ export default function VatReturns() {
                                                 </div>
                                             ) : (
                                                 <div style={{ display: 'flex', gap: 4, justifyContent: 'center', flexWrap: 'wrap' }}>
+                                                    <button
+                                                        onClick={() => configureQuarterAdjustment(q)}
+                                                        className="btn-secondary"
+                                                        style={{ fontSize: '0.82rem', padding: '4px 10px', background: '#fff8e1', border: '1px solid #ffb300', color: '#8a6d00' }}
+                                                        title="Add prior-period correction to this quarter's export and filing totals"
+                                                    >
+                                                        ⚖️ Adjustment
+                                                    </button>
                                                     <button
                                                         onClick={() => exportVatCsv(q)}
                                                         className="btn-secondary"
