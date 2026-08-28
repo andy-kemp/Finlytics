@@ -605,33 +605,39 @@ namespace FinanceHubFunctions.Functions
                     ? ty.GetString()!
                     : GetTaxYear(periodStart);
 
-                // Get all Draft trips for this director in the date range (not already in a claim)
-                // Must match the claim's tax year to prevent cross-tax-year bundling
-                var draftTrips = (await _tripRepository.GetDraftTripsByDirectorAsync(director))
-                    .Where(t => t.TripDate >= periodStart && t.TripDate <= periodEnd
-                             && t.ClaimId == null
-                             && t.TaxYear == taxYear)
+                var directorDraftClaims = (await _claimRepository.GetByDirectorAsync(director))
+                    .Where(c => c.Status == "Draft")
                     .ToList();
 
-                var existingDraftClaim = (await _claimRepository.GetByDirectorAndTaxYearAsync(director, taxYear))
-                    .Where(c => c.Status == "Draft")
+                var mergeableDraftClaimIds = directorDraftClaims
+                    .Select(c => c.Id)
+                    .ToHashSet();
+
+                // Include all Draft trips for this director/tax-year in range, even if they
+                // are currently attached to an older Draft claim that should be merged.
+                var draftTrips = (await _tripRepository.GetAllAsync())
+                    .Where(t => t.Director == director
+                             && t.Status == "Draft"
+                             && t.TripDate >= periodStart
+                             && t.TripDate <= periodEnd
+                             && t.TaxYear == taxYear
+                             && (t.ClaimId == null || mergeableDraftClaimIds.Contains(t.ClaimId.Value)))
+                    .ToList();
+
+                var existingDraftClaim = directorDraftClaims
+                    .Where(c => c.TaxYear == taxYear)
                     .OrderByDescending(c => c.CreatedAt)
                     .FirstOrDefault();
 
                 if (existingDraftClaim != null)
                 {
-                    var alreadyLinkedDraftTrips = (await _tripRepository.GetAllAsync())
-                        .Where(t => t.ClaimId == existingDraftClaim.Id && t.Status == "Draft")
-                        .ToList();
-
                     foreach (var trip in draftTrips)
                     {
                         trip.ClaimId = existingDraftClaim.Id;
                         await _tripRepository.UpdateAsync(trip);
                     }
 
-                    var combinedTrips = alreadyLinkedDraftTrips
-                        .Concat(draftTrips)
+                    var combinedTrips = draftTrips
                         .GroupBy(t => t.Id)
                         .Select(g => g.First())
                         .ToList();
@@ -655,8 +661,10 @@ namespace FinanceHubFunctions.Functions
                         await _tripRepository.UpdateAsync(trip);
                     }
 
-                    existingDraftClaim.PeriodStart = existingDraftClaim.PeriodStart < periodStart ? existingDraftClaim.PeriodStart : periodStart;
-                    existingDraftClaim.PeriodEnd = existingDraftClaim.PeriodEnd > periodEnd ? existingDraftClaim.PeriodEnd : periodEnd;
+                    var minTripDate = combinedTrips.Min(t => t.TripDate);
+                    var maxTripDate = combinedTrips.Max(t => t.TripDate);
+                    existingDraftClaim.PeriodStart = new[] { existingDraftClaim.PeriodStart, periodStart, minTripDate }.Min();
+                    existingDraftClaim.PeriodEnd = new[] { existingDraftClaim.PeriodEnd, periodEnd, maxTripDate }.Max();
                     existingDraftClaim.TotalMiles = combinedTrips.Sum(t => t.Miles);
                     existingDraftClaim.MilesAt45p = combinedTrips.Sum(t => t.MilesAt45p);
                     existingDraftClaim.MilesAt25p = combinedTrips.Sum(t => t.MilesAt25p);
@@ -665,6 +673,15 @@ namespace FinanceHubFunctions.Functions
                         existingDraftClaim.Notes = notes;
 
                     var updatedClaim = await _claimRepository.UpdateAsync(existingDraftClaim);
+
+                    // Remove now-empty draft claims after merging their trips into the target claim.
+                    foreach (var otherDraft in directorDraftClaims.Where(c => c.Id != existingDraftClaim.Id))
+                    {
+                        var hasRemainingTrips = (await _tripRepository.GetAllAsync())
+                            .Any(t => t.ClaimId == otherDraft.Id && t.Status == "Draft");
+                        if (!hasRemainingTrips)
+                            await _claimRepository.DeleteAsync(otherDraft.Id);
+                    }
 
                     var updatedResp = req.CreateResponse(HttpStatusCode.OK);
                     await updatedResp.WriteAsJsonAsync(new
@@ -721,6 +738,14 @@ namespace FinanceHubFunctions.Functions
                 {
                     trip.ClaimId = createdClaim.Id;
                     await _tripRepository.UpdateAsync(trip);
+                }
+
+                foreach (var otherDraft in directorDraftClaims)
+                {
+                    var hasRemainingTrips = (await _tripRepository.GetAllAsync())
+                        .Any(t => t.ClaimId == otherDraft.Id && t.Status == "Draft");
+                    if (!hasRemainingTrips)
+                        await _claimRepository.DeleteAsync(otherDraft.Id);
                 }
 
                 var resp = req.CreateResponse(HttpStatusCode.Created);
