@@ -510,6 +510,74 @@ namespace FinanceHubFunctions.Functions
         }
 
         // ─────────────────────────────────────────────────────────────────
+        // DELETE /api/mileage/claims/{id}
+        // Deletes a Draft claim and unlinks all its Draft trips
+        // ─────────────────────────────────────────────────────────────────
+        [Function("DeleteMileageClaim")]
+        public async Task<HttpResponseData> DeleteMileageClaim(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "mileage/claims/{id:int}")] HttpRequestData req,
+            int id)
+        {
+            _logger.LogInformation("DeleteMileageClaim called for id {Id}", id);
+            try
+            {
+                var blocked = await _guard.GuardAsync(req, "mileage claim");
+                if (blocked != null) return blocked;
+
+                var claim = await _claimRepository.GetByIdAsync(id);
+                if (claim == null)
+                {
+                    var notFound = req.CreateResponse(HttpStatusCode.NotFound);
+                    await notFound.WriteStringAsync("Claim not found");
+                    return notFound;
+                }
+
+                if (claim.Status != "Draft")
+                {
+                    var conflict = req.CreateResponse(HttpStatusCode.Conflict);
+                    await conflict.WriteStringAsync("Only Draft claims can be deleted");
+                    return conflict;
+                }
+
+                var linkedTrips = (await _tripRepository.GetAllAsync())
+                    .Where(t => t.ClaimId == id)
+                    .ToList();
+
+                foreach (var trip in linkedTrips)
+                {
+                    if (trip.Status != "Draft")
+                    {
+                        var locked = req.CreateResponse(HttpStatusCode.Conflict);
+                        await locked.WriteStringAsync("Cannot delete claim because one or more linked trips are not Draft");
+                        return locked;
+                    }
+
+                    trip.ClaimId = null;
+                    await _tripRepository.UpdateAsync(trip);
+                }
+
+                await _claimRepository.DeleteAsync(id);
+
+                var resp = req.CreateResponse(HttpStatusCode.OK);
+                await resp.WriteAsJsonAsync(new
+                {
+                    deletedClaimId = id,
+                    claimRef = claim.ClaimRef,
+                    tripsUnlinked = linkedTrips.Count,
+                    message = "Draft claim deleted and trips unlinked"
+                });
+                return resp;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error deleting mileage claim");
+                var err = req.CreateResponse(HttpStatusCode.InternalServerError);
+                await err.WriteStringAsync($"Error: {ex.Message}");
+                return err;
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────
         // POST /api/mileage/claims/generate
         // Body: { director, periodStart, periodEnd, notes? }
         // Bundles all unclaimed Draft trips in the period into a new claim
