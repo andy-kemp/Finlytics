@@ -353,6 +353,8 @@ namespace FinanceHubFunctions.Functions
                     supplierCode = "UNK";
                 }
 
+                int? createdDbId = null;
+                string? createdExpenseCode = null;
                 string ledgerId;
                 if (_expenseRepository != null)
                 {
@@ -367,6 +369,8 @@ namespace FinanceHubFunctions.Functions
                     expense.ExpenseId = $"{supplierCode}-{year}-{nextNumber:D3}";
                     
                     var createdExpense = await _expenseRepository.CreateAsync(expense);
+                    createdDbId = createdExpense.Id;
+                    createdExpenseCode = createdExpense.ExpenseId;
                     ledgerId = createdExpense.Id.ToString();
                     
                     // If this is a DLA expense, create a Company Ledger entry
@@ -393,10 +397,17 @@ namespace FinanceHubFunctions.Functions
                     var token = AuthHelper.GetAccessToken(req);
                     var expenseId = await _sharePointService.CreateExpense(expense, token ?? "", supplierLookupId);
                     ledgerId = expenseId.ToString();
+                    createdExpenseCode = expense.ExpenseId;
                 }
                 
                 var response = req.CreateResponse(HttpStatusCode.Created);
-                await response.WriteAsJsonAsync(new { success = true, id = ledgerId });
+                await response.WriteAsJsonAsync(new
+                {
+                    success = true,
+                    id = createdDbId,
+                    expenseId = createdExpenseCode,
+                    legacyId = ledgerId
+                });
                 return response;
             }
             catch (Exception ex)
