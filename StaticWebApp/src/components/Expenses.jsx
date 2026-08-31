@@ -201,26 +201,39 @@ const Expenses = ({ openNew }) => {
     const normalizeDateForApi = (value) => {
         if (!value) return '';
 
+        const raw = String(value).trim();
+
         // Already ISO date-only
-        if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-            return value;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+            return raw;
         }
 
-        // Accept UK-style dates from OCR/manual entry: d/m/yyyy or dd/mm/yyyy
-        const ukMatch = String(value).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-        if (ukMatch) {
-            const day = ukMatch[1].padStart(2, '0');
-            const month = ukMatch[2].padStart(2, '0');
-            const year = ukMatch[3];
-            return `${year}-${month}-${day}`;
+        // ISO date-time input — keep the date part
+        const isoPrefix = raw.match(/^(\d{4}-\d{2}-\d{2})T/);
+        if (isoPrefix) {
+            return isoPrefix[1];
         }
 
-        const parsed = new Date(value);
+        // Accept localized/manual dates with optional spaces and separators: / . -
+        const compact = raw.replace(/\s+/g, '');
+        const dmY = compact.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/);
+        if (dmY) {
+            const dayNum = Number(dmY[1]);
+            const monthNum = Number(dmY[2]);
+            const year = dmY[3];
+            if (monthNum >= 1 && monthNum <= 12 && dayNum >= 1 && dayNum <= 31) {
+                const day = String(dayNum).padStart(2, '0');
+                const month = String(monthNum).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+            }
+        }
+
+        const parsed = new Date(raw);
         if (!Number.isNaN(parsed.getTime())) {
             return parsed.toISOString().split('T')[0];
         }
 
-        return String(value);
+        return raw;
     };
 
     const dateKey = (value) => {

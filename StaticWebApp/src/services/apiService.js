@@ -322,6 +322,11 @@ export async function createExpense(expense) {
         result = rawBody;
     }
 
+    // Some API paths return an error payload with HTTP 200. Treat it as failure.
+    if (result && typeof result === 'object' && result.error) {
+        throw new Error(result.error);
+    }
+
     const normalizedId =
         (typeof result === 'number' ? result : undefined)
         ?? (typeof result === 'string' && /^\d+$/.test(result.trim()) ? Number(result.trim()) : undefined)
