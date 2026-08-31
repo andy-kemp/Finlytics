@@ -399,6 +399,11 @@ namespace FinanceHubFunctions.Functions
                     ledgerId = expenseId.ToString();
                     createdExpenseCode = expense.ExpenseId;
                 }
+
+                if (!createdDbId.HasValue && int.TryParse(ledgerId, out var parsedId))
+                {
+                    createdDbId = parsedId;
+                }
                 
                 var response = req.CreateResponse(HttpStatusCode.Created);
                 await response.WriteAsJsonAsync(new

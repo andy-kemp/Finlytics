@@ -333,6 +333,8 @@ export async function createExpense(expense) {
         ?? result?.data?.Id
         ?? result?.data?.expenseId
         ?? result?.data?.ExpenseId
+        ?? (typeof result?.legacyId === 'string' && /^\d+$/.test(result.legacyId.trim()) ? Number(result.legacyId.trim()) : undefined)
+        ?? (typeof result?.data?.legacyId === 'string' && /^\d+$/.test(result.data.legacyId.trim()) ? Number(result.data.legacyId.trim()) : undefined)
         ?? result?.result?.id
         ?? result?.result?.Id;
 
