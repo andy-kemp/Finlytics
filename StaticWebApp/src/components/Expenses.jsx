@@ -253,7 +253,7 @@ const Expenses = ({ openNew }) => {
         return dateKey(a) === dateKey(b);
     };
 
-    const resolveCreatedExpenseId = async (expenseData) => {
+    const resolveCreatedExpenseId = async (expenseData, knownIds = null) => {
         try {
             const list = await getExpenses();
             const supplier = (expenseData.supplier || '').trim().toLowerCase();
@@ -263,7 +263,12 @@ const Expenses = ({ openNew }) => {
 
             const source = Array.isArray(list) ? list : [];
 
-            let candidates = source.filter(e => {
+            // Prefer newly-added rows if caller provided the list that existed before create.
+            const newlyAdded = knownIds
+                ? source.filter(e => !knownIds.has(String(e.id ?? e.Id ?? '')))
+                : source;
+
+            let candidates = newlyAdded.filter(e => {
                 const eSupplier = (e.supplier || '').trim().toLowerCase();
                 const eReference = (e.reference || '').trim().toLowerCase();
                 const eCategory = (e.category || '').trim().toLowerCase();
@@ -278,7 +283,7 @@ const Expenses = ({ openNew }) => {
 
             // Relaxed fallback for environments where category/reference are normalised differently.
             if (candidates.length === 0) {
-                candidates = source.filter(e => {
+                candidates = newlyAdded.filter(e => {
                     const eSupplier = (e.supplier || '').trim().toLowerCase();
                     const eGross = Number(e.amountGross || 0);
                     const eDate = e.datePaid || e.entryDate;
@@ -492,10 +497,18 @@ const Expenses = ({ openNew }) => {
                 await updateExpense(editingExpense.id, expenseData);
                 expenseId = editingExpense.id;
             } else {
+                const existingIds = new Set((Array.isArray(expenses) ? expenses : []).map(e => String(e.id ?? e.Id ?? '')));
                 const result = await createExpense(expenseData);
                 expenseId = result?.id ?? result?.Id ?? result?.expenseId ?? result?.ExpenseId;
                 if (!hasUsableExpenseId(expenseId)) {
-                    expenseId = await resolveCreatedExpenseId(expenseData);
+                    expenseId = await resolveCreatedExpenseId(expenseData, existingIds);
+                    expenseIdResolvedFromFallback = hasUsableExpenseId(expenseId);
+                }
+
+                // Retry once after a short delay for eventual consistency.
+                if (!hasUsableExpenseId(expenseId)) {
+                    await new Promise(resolve => setTimeout(resolve, 600));
+                    expenseId = await resolveCreatedExpenseId(expenseData, existingIds);
                     expenseIdResolvedFromFallback = hasUsableExpenseId(expenseId);
                 }
             }
