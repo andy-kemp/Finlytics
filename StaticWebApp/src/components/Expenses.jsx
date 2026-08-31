@@ -223,20 +223,47 @@ const Expenses = ({ openNew }) => {
         return String(value);
     };
 
+    const dateKey = (value) => {
+        if (!value) return '';
+        const s = String(value).trim();
+
+        // Keep YYYY-MM-DD as-is to avoid timezone shifting.
+        const isoPrefix = s.match(/^(\d{4}-\d{2}-\d{2})/);
+        if (isoPrefix) return isoPrefix[1];
+
+        // Convert UK-style date.
+        const ukMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        if (ukMatch) {
+            const day = ukMatch[1].padStart(2, '0');
+            const month = ukMatch[2].padStart(2, '0');
+            const year = ukMatch[3];
+            return `${year}-${month}-${day}`;
+        }
+
+        const d = new Date(s);
+        if (Number.isNaN(d.getTime())) return '';
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    };
+
     const sameDay = (a, b) => {
         if (!a || !b) return false;
-        return normalizeDateForApi(a) === normalizeDateForApi(b);
+        return dateKey(a) === dateKey(b);
     };
 
     const resolveCreatedExpenseId = async (expenseData) => {
         try {
-            const list = await getExpenses({ companyOnly: true });
+            const list = await getExpenses();
             const supplier = (expenseData.supplier || '').trim().toLowerCase();
             const reference = (expenseData.reference || '').trim().toLowerCase();
             const category = (expenseData.category || '').trim().toLowerCase();
             const amountGross = Number(expenseData.amountGross || 0);
 
-            const candidates = (Array.isArray(list) ? list : []).filter(e => {
+            const source = Array.isArray(list) ? list : [];
+
+            let candidates = source.filter(e => {
                 const eSupplier = (e.supplier || '').trim().toLowerCase();
                 const eReference = (e.reference || '').trim().toLowerCase();
                 const eCategory = (e.category || '').trim().toLowerCase();
@@ -248,6 +275,18 @@ const Expenses = ({ openNew }) => {
                     && sameDay(eDate, expenseData.datePaid)
                     && Math.abs(eGross - amountGross) < 0.01;
             });
+
+            // Relaxed fallback for environments where category/reference are normalised differently.
+            if (candidates.length === 0) {
+                candidates = source.filter(e => {
+                    const eSupplier = (e.supplier || '').trim().toLowerCase();
+                    const eGross = Number(e.amountGross || 0);
+                    const eDate = e.datePaid || e.entryDate;
+                    return eSupplier === supplier
+                        && sameDay(eDate, expenseData.datePaid)
+                        && Math.abs(eGross - amountGross) < 0.01;
+                });
+            }
 
             if (candidates.length === 0) return null;
 
@@ -446,6 +485,7 @@ const Expenses = ({ openNew }) => {
             };
 
             let expenseId;
+            let expenseIdResolvedFromFallback = false;
             if (editingExpense) {
                 await updateExpense(editingExpense.id, expenseData);
                 expenseId = editingExpense.id;
@@ -454,9 +494,7 @@ const Expenses = ({ openNew }) => {
                 expenseId = result?.id ?? result?.Id ?? result?.expenseId ?? result?.ExpenseId;
                 if (!expenseId) {
                     expenseId = await resolveCreatedExpenseId(expenseData);
-                }
-                if (!expenseId) {
-                    throw new Error('Expense was created but no expense ID was returned. Please refresh and try again.');
+                    expenseIdResolvedFromFallback = !!expenseId;
                 }
             }
 
@@ -476,7 +514,7 @@ const Expenses = ({ openNew }) => {
             // Intercept if no receipt and not already handled (declaration or reason on file)
             const hasReceipt = selectedFiles.length > 0 || existingAttachments.length > 0;
             const alreadyHandled = editingExpense?.hasMissingReceiptDeclaration || editingExpense?.noReceiptReason;
-            if (!formData.isDLA && !hasReceipt && !alreadyHandled) {
+            if (!formData.isDLA && !hasReceipt && !alreadyHandled && expenseId) {
                 resetForm();
                 setReceiptRequiredModal({
                     savedId: expenseId,
@@ -487,6 +525,11 @@ const Expenses = ({ openNew }) => {
             }
 
             showToast('Expense saved successfully!', 'success');
+            if (!editingExpense && !expenseId) {
+                showToast('Expense was saved, but no ID was returned yet. Please refresh before adding a no-receipt declaration.', 'warning');
+            } else if (!editingExpense && expenseIdResolvedFromFallback) {
+                showToast('Expense saved. Declaration workflow linked via fallback ID match.', 'info');
+            }
             resetForm();
             await loadData();
         } catch (error) {
