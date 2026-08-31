@@ -163,6 +163,9 @@ export default function Dashboard({ onNavigate }) {
             const dlaEntries = Array.isArray(dlaEntriesRaw) ? dlaEntriesRaw : [];
             const dlaPayments = Array.isArray(dlaPaymentsRaw) ? dlaPaymentsRaw : [];
             const payrollRuns = Array.isArray(payrollRunsRaw) ? payrollRunsRaw : [];
+            const hasPayrollRuns = payrollRuns.length > 0;
+            const payrollConfigured = Boolean(payrollSettings?.employerPAYEReference || payrollSettings?.employerPayeReference);
+            const includePayroll = payrollConfigured || hasPayrollRuns;
 
             setCompanySettings(settings);
 
@@ -301,9 +304,10 @@ export default function Dashboard({ onNavigate }) {
             const vatBalance = incomeVAT - expenseVAT - dlaVatReclaimable;
             const tradingProfit = ctIncomeNet - ctAllowableExpenseNet - ctAllowableDlaNet;
 
-            const salary = ytdAggregates?.salaryGross || 0;
-            const employerNI = ytdAggregates?.employerNI || 0;
-            const employeeNI = ytdAggregates?.employeeNI || 0;
+            const salary = includePayroll ? (ytdAggregates?.salaryGross || 0) : 0;
+            const employerNI = includePayroll ? (ytdAggregates?.employerNI || 0) : 0;
+            const employeeNI = includePayroll ? (ytdAggregates?.employeeNI || 0) : 0;
+            const payeRemitted = includePayroll ? (ytdAggregates?.payeRemitted || 0) : 0;
             const profitBeforeTax = tradingProfit - salary - employerNI;
             const corpTaxEstimate = calculateCorporationTax(profitBeforeTax);
             const corpTaxPaid = ytdAggregates?.corpTaxPaid || 0;
@@ -313,7 +317,7 @@ export default function Dashboard({ onNavigate }) {
             const periodDlaGross = periodDlaEntries.reduce((sum, e) => sum + (e.amountGross || 0), 0);
             const periodDlaPaidOut = periodDlaPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
 
-            const currentBalance = income - expenseCashOut - periodDlaPaidOut - salary - (ytdAggregates?.payeRemitted || 0) - 
+            const currentBalance = income - expenseCashOut - periodDlaPaidOut - salary - payeRemitted - 
                                    employeeNI - employerNI - corpTaxPaid - (ytdAggregates?.dividendsPaid || 0);
             const vatSetAside = Math.max(0, unfiledVatBalance || 0);
             const corpTaxSetAside = Math.max(0, corpTaxDue || 0);
@@ -333,6 +337,8 @@ export default function Dashboard({ onNavigate }) {
                 estimatedVatOwed,
                 estimatedVatReclaim,
                 salary, employeeNI, employerNI,
+                payeRemitted,
+                payrollIncluded: includePayroll,
                 dividendsDeclared: ytdAggregates?.dividendsDeclared || 0,
                 dividendsPaid: ytdAggregates?.dividendsPaid || 0,
                 dlaNet: dlaNetCalc,
@@ -377,8 +383,8 @@ export default function Dashboard({ onNavigate }) {
                 periodDlaGross,
                 periodDlaPaidOut,
                 cashFlowIn: income,
-                cashFlowOut: expenseCashOut + periodDlaPaidOut + salary + (ytdAggregates?.payeRemitted || 0) + employeeNI + employerNI + corpTaxPaid + (ytdAggregates?.dividendsPaid || 0),
-                cashFlowNet: income - expenseCashOut - periodDlaPaidOut - salary - (ytdAggregates?.payeRemitted || 0) - employeeNI - employerNI - corpTaxPaid - (ytdAggregates?.dividendsPaid || 0)
+                cashFlowOut: expenseCashOut + periodDlaPaidOut + salary + payeRemitted + employeeNI + employerNI + corpTaxPaid + (ytdAggregates?.dividendsPaid || 0),
+                cashFlowNet: income - expenseCashOut - periodDlaPaidOut - salary - payeRemitted - employeeNI - employerNI - corpTaxPaid - (ytdAggregates?.dividendsPaid || 0)
             });
 
             // ── Upcoming Deadlines ──────────────────────────────────────────
@@ -462,7 +468,6 @@ export default function Dashboard({ onNavigate }) {
 
             // Payroll deadlines
             const payDay = payrollSettings?.payDayOfMonth || 25;
-            const hasPayrollRuns = Array.isArray(payrollRuns) && payrollRuns.length > 0;
             if (payrollSettings?.employerPAYEReference || payrollSettings?.employerPayeReference) {
                 // Next pay day — always show as a reminder to run payroll
                 let nextPayDate = new Date(now.getFullYear(), now.getMonth(), payDay);
@@ -721,9 +726,13 @@ export default function Dashboard({ onNavigate }) {
                     <div className="metric-content">
                         <div className="metric-label">Salary & NI</div>
                         <div className="metric-value">{formatCurrency(metrics.salary)}</div>
-                        <div className="metric-detail">
-                            Emp NI: {formatCurrency(metrics.employeeNI)} | Er NI: {formatCurrency(metrics.employerNI)}
-                        </div>
+                        {metrics.payrollIncluded ? (
+                            <div className="metric-detail">
+                                Emp NI: {formatCurrency(metrics.employeeNI)} | Er NI: {formatCurrency(metrics.employerNI)}
+                            </div>
+                        ) : (
+                            <div className="metric-detail">Payroll not enabled</div>
+                        )}
                     </div>
                 </div>
                 {metrics.psaApproved && (
