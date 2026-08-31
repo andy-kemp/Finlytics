@@ -207,6 +207,8 @@ export default function Dashboard({ onNavigate }) {
             const filedVatNet = filedReturns.reduce((sum, fr) => sum + (fr.vatOwed || 0), 0);
             // Unfiled VAT = (sales VAT - expenses VAT - DLA input VAT) - already filed
             const unfiledVatBalance = (allInvoiceVat - allExpenseVat - dlaVatReclaimable) - filedVatNet;
+            const estimatedVatOwed = Math.max(0, unfiledVatBalance);
+            const estimatedVatReclaim = Math.max(0, -unfiledVatBalance);
 
             const periodInvoices = filterByDateRange(invoices, 'dateIssued', settings);
             const periodExpenses = filterByDateRange(expenses.filter(e => !e.isDLA).map(e => ({
@@ -328,6 +330,8 @@ export default function Dashboard({ onNavigate }) {
                 allVatIn: allInvoiceVat,
                 allVatOut: allExpenseVat + dlaVatReclaimable,
                 filedVatNet,
+                estimatedVatOwed,
+                estimatedVatReclaim,
                 salary, employeeNI, employerNI,
                 dividendsDeclared: ytdAggregates?.dividendsDeclared || 0,
                 dividendsPaid: ytdAggregates?.dividendsPaid || 0,
@@ -702,6 +706,9 @@ export default function Dashboard({ onNavigate }) {
                         <div className="metric-label">VAT — Unfiled Balance</div>
                         <div className={`metric-value ${(metrics.unfiledVatBalance || 0) >= 0 ? 'positive' : 'negative'}`}>
                             {formatCurrency(metrics.unfiledVatBalance || 0)}
+                        </div>
+                        <div className="metric-detail">
+                            Est. owed: {formatCurrency(metrics.estimatedVatOwed || 0)} | Est. reclaim: {formatCurrency(metrics.estimatedVatReclaim || 0)}
                         </div>
                         <div className="metric-detail">
                             Filed: {formatCurrency(metrics.filedVatNet || 0)} | All-time In: {formatCurrency(metrics.allVatIn || 0)} | Out: {formatCurrency(metrics.allVatOut || 0)}
