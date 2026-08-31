@@ -380,7 +380,10 @@ const Expenses = ({ openNew }) => {
                 expenseId = editingExpense.id;
             } else {
                 const result = await createExpense(expenseData);
-                expenseId = result.id;
+                expenseId = result?.id ?? result?.Id ?? result?.expenseId ?? result?.ExpenseId;
+                if (!expenseId) {
+                    throw new Error('Expense was created but no expense ID was returned. Please refresh and try again.');
+                }
             }
 
             // Upload receipts if files selected
@@ -659,6 +662,11 @@ const Expenses = ({ openNew }) => {
     };
 
     const openDeclarationModal = (expense) => {
+        const expenseId = expense?.id ?? expense?.Id;
+        if (!expenseId) {
+            showToast('Cannot create declaration: missing expense ID. Please refresh and try again.', 'error');
+            return;
+        }
         setDeclarationForm({
             declarationType: 'MissingReceiptDeclaration',
             declarerName: companySettings?.directorName || '',
@@ -675,7 +683,7 @@ const Expenses = ({ openNew }) => {
             typedSignature: companySettings?.directorName || ''
         });
         setDeclarationStep('form');
-        setDeclarationModal({ expenseId: expense.id, expense });
+        setDeclarationModal({ expenseId, expense: { ...expense, id: expenseId } });
     };
 
     const handleCreateDeclaration = async () => {

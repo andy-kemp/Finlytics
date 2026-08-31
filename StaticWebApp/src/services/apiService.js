@@ -259,7 +259,7 @@ export async function getExpenses({ companyOnly = false } = {}) {
         }
         
         return {
-            id: expense.id,
+            id: expense.id ?? expense.Id,
             expenseId: expense.expenseId || expense.ExpenseId,
             supplier: expense.supplier || expense.Supplier || expense.SupplierFreeText,
             supplierFreeText: expense.supplierFreeText || expense.SupplierFreeText,
@@ -315,8 +315,16 @@ export async function createExpense(expense) {
     }
     
     const result = await response.json();
-    console.log('API success response:', result);
-    return result;
+    const normalizedId = result?.id ?? result?.Id ?? result?.expenseId ?? result?.ExpenseId;
+    const normalizedResult = { ...result, id: normalizedId };
+    console.log('API success response:', normalizedResult);
+    return normalizedResult;
+}
+
+function ensureExpenseId(expenseId, operation) {
+    if (expenseId === undefined || expenseId === null || `${expenseId}`.trim() === '') {
+        throw new Error(`Cannot ${operation}: missing expense ID`);
+    }
 }
 
 export async function updateExpense(id, expense) {
@@ -2271,6 +2279,7 @@ export async function emailDividendVoucher(id, allocationId, email) {
 // ── Missing Receipt Declarations ──────────────────────────────────────────────
 
 export async function getMissingReceiptDeclaration(expenseId) {
+    ensureExpenseId(expenseId, 'get declaration');
     const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE}/expenses/${expenseId}/declaration`, { headers });
     if (response.status === 404) return null;
@@ -2282,6 +2291,7 @@ export async function getMissingReceiptDeclaration(expenseId) {
 }
 
 export async function createMissingReceiptDeclaration(expenseId, data) {
+    ensureExpenseId(expenseId, 'create declaration');
     const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE}/expenses/${expenseId}/declaration`, {
         method: 'POST',
@@ -2296,6 +2306,7 @@ export async function createMissingReceiptDeclaration(expenseId, data) {
 }
 
 export async function finaliseMissingReceiptDeclaration(expenseId) {
+    ensureExpenseId(expenseId, 'finalise declaration');
     const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE}/expenses/${expenseId}/declaration/finalise`, {
         method: 'POST',
@@ -2310,6 +2321,7 @@ export async function finaliseMissingReceiptDeclaration(expenseId) {
 }
 
 export async function voidMissingReceiptDeclaration(expenseId, reason) {
+    ensureExpenseId(expenseId, 'void declaration');
     const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE}/expenses/${expenseId}/declaration/void`, {
         method: 'POST',
