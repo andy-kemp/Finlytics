@@ -313,6 +313,11 @@ export default function Dashboard({ onNavigate }) {
 
             const currentBalance = income - expenseCashOut - periodDlaPaidOut - salary - (ytdAggregates?.payeRemitted || 0) - 
                                    employeeNI - employerNI - corpTaxPaid - (ytdAggregates?.dividendsPaid || 0);
+            const vatSetAside = Math.max(0, unfiledVatBalance || 0);
+            const corpTaxSetAside = Math.max(0, corpTaxDue || 0);
+            const taxProtectedCash = vatSetAside + corpTaxSetAside;
+            const operatingCashEstimate = currentBalance - taxProtectedCash;
+            const totalCompanyCashEstimate = currentBalance;
 
             setMetrics({
                 income, incomeNet, incomeVAT,
@@ -335,6 +340,11 @@ export default function Dashboard({ onNavigate }) {
                 ctAllowableDlaNet,
                 currentBalance, tradingProfit, profitBeforeTax,
                 corpTaxEstimate, corpTaxPaid, corpTaxDue,
+                vatSetAside,
+                corpTaxSetAside,
+                taxProtectedCash,
+                operatingCashEstimate,
+                totalCompanyCashEstimate,
                 unpaidInvoices: invoices.filter(inv => inv.status !== 'Paid' && inv.status !== 'Draft').length,
                 unpaidAmount: invoices.filter(inv => inv.status !== 'Paid' && inv.status !== 'Draft')
                     .reduce((sum, inv) => sum + (inv.amountGross || 0), 0),
@@ -769,9 +779,22 @@ export default function Dashboard({ onNavigate }) {
                 <div className="metric-card balance">
                     <div className="metric-icon">🏦</div>
                     <div className="metric-content">
-                        <div className="metric-label">Estimated Balance</div>
-                        <div className={`metric-value ${metrics.currentBalance >= 0 ? 'positive' : 'negative'}`}>
-                            {formatCurrency(metrics.currentBalance)}
+                        <div className="metric-label">Operating Cash (Est.)</div>
+                        <div className={`metric-value ${metrics.operatingCashEstimate >= 0 ? 'positive' : 'negative'}`}>
+                            {formatCurrency(metrics.operatingCashEstimate)}
+                        </div>
+                        <div className="metric-detail">
+                            VAT set-aside: {formatCurrency(metrics.vatSetAside)} | CT set-aside: {formatCurrency(metrics.corpTaxSetAside)}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="metric-card balance">
+                    <div className="metric-icon">🧮</div>
+                    <div className="metric-content">
+                        <div className="metric-label">Total Company Cash (Est.)</div>
+                        <div className={`metric-value ${metrics.totalCompanyCashEstimate >= 0 ? 'positive' : 'negative'}`}>
+                            {formatCurrency(metrics.totalCompanyCashEstimate)}
                         </div>
                         <div className="metric-detail">Trading: {formatCurrency(metrics.tradingProfit)}</div>
                     </div>
