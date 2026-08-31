@@ -223,6 +223,50 @@ const Expenses = ({ openNew }) => {
         return String(value);
     };
 
+    const sameDay = (a, b) => {
+        if (!a || !b) return false;
+        return normalizeDateForApi(a) === normalizeDateForApi(b);
+    };
+
+    const resolveCreatedExpenseId = async (expenseData) => {
+        try {
+            const list = await getExpenses({ companyOnly: true });
+            const supplier = (expenseData.supplier || '').trim().toLowerCase();
+            const reference = (expenseData.reference || '').trim().toLowerCase();
+            const category = (expenseData.category || '').trim().toLowerCase();
+            const amountGross = Number(expenseData.amountGross || 0);
+
+            const candidates = (Array.isArray(list) ? list : []).filter(e => {
+                const eSupplier = (e.supplier || '').trim().toLowerCase();
+                const eReference = (e.reference || '').trim().toLowerCase();
+                const eCategory = (e.category || '').trim().toLowerCase();
+                const eGross = Number(e.amountGross || 0);
+                const eDate = e.datePaid || e.entryDate;
+                return eSupplier === supplier
+                    && eReference === reference
+                    && eCategory === category
+                    && sameDay(eDate, expenseData.datePaid)
+                    && Math.abs(eGross - amountGross) < 0.01;
+            });
+
+            if (candidates.length === 0) return null;
+
+            // Prefer highest numeric ID; fallback to newest date if IDs are non-numeric.
+            const best = candidates.sort((a, b) => {
+                const aId = Number(a.id);
+                const bId = Number(b.id);
+                if (!Number.isNaN(aId) && !Number.isNaN(bId)) return bId - aId;
+                const aTime = new Date(a.entryDate || a.datePaid || 0).getTime();
+                const bTime = new Date(b.entryDate || b.datePaid || 0).getTime();
+                return bTime - aTime;
+            })[0];
+
+            return best?.id ?? best?.Id ?? null;
+        } catch (_) {
+            return null;
+        }
+    };
+
     const getVATRate = (vatApplicability) => {
         // Determine VAT rate based on applicability
         switch (vatApplicability) {
@@ -408,6 +452,9 @@ const Expenses = ({ openNew }) => {
             } else {
                 const result = await createExpense(expenseData);
                 expenseId = result?.id ?? result?.Id ?? result?.expenseId ?? result?.ExpenseId;
+                if (!expenseId) {
+                    expenseId = await resolveCreatedExpenseId(expenseData);
+                }
                 if (!expenseId) {
                     throw new Error('Expense was created but no expense ID was returned. Please refresh and try again.');
                 }

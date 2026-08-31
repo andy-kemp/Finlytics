@@ -315,7 +315,14 @@ export async function createExpense(expense) {
     }
     
     const result = await response.json();
-    const normalizedId = result?.id ?? result?.Id ?? result?.expenseId ?? result?.ExpenseId;
+    const normalizedId = result?.id
+        ?? result?.Id
+        ?? result?.expenseId
+        ?? result?.ExpenseId
+        ?? result?.data?.id
+        ?? result?.data?.Id
+        ?? result?.data?.expenseId
+        ?? result?.data?.ExpenseId;
     const normalizedResult = { ...result, id: normalizedId };
     console.log('API success response:', normalizedResult);
     return normalizedResult;
