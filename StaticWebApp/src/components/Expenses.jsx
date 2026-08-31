@@ -198,6 +198,31 @@ const Expenses = ({ openNew }) => {
         return result;
     };
 
+    const normalizeDateForApi = (value) => {
+        if (!value) return '';
+
+        // Already ISO date-only
+        if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+            return value;
+        }
+
+        // Accept UK-style dates from OCR/manual entry: d/m/yyyy or dd/mm/yyyy
+        const ukMatch = String(value).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        if (ukMatch) {
+            const day = ukMatch[1].padStart(2, '0');
+            const month = ukMatch[2].padStart(2, '0');
+            const year = ukMatch[3];
+            return `${year}-${month}-${day}`;
+        }
+
+        const parsed = new Date(value);
+        if (!Number.isNaN(parsed.getTime())) {
+            return parsed.toISOString().split('T')[0];
+        }
+
+        return String(value);
+    };
+
     const getVATRate = (vatApplicability) => {
         // Determine VAT rate based on applicability
         switch (vatApplicability) {
@@ -296,6 +321,7 @@ const Expenses = ({ openNew }) => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        const normalizedDatePaid = normalizeDateForApi(formData.datePaid);
 
         // ── Route isDLA saves straight into the DLA table ──────────────────
         if (formData.isDLA && !editingExpense) {
@@ -318,12 +344,12 @@ const Expenses = ({ openNew }) => {
                     amountNet: parseFloat(formData.amountNet) || 0,
                     vatAmount: parseFloat(formData.vatAmount) || 0,
                     amountGross: parseFloat(formData.amountGross) || 0,
-                    entryDate: new Date(formData.datePaid).toISOString(),
+                    entryDate: new Date(normalizedDatePaid).toISOString(),
                     datePaid: null,
                     paymentMethod: formData.paymentMethod,
                     notes: formData.notes,
-                    taxYear: calculateTaxYear(formData.datePaid),
-                    financialYear: calculateFinancialYear(formData.datePaid),
+                    taxYear: calculateTaxYear(normalizedDatePaid),
+                    financialYear: calculateFinancialYear(normalizedDatePaid),
                     isStartupCost: false,
                     classificationSource: 'auto'
                 };
@@ -367,11 +393,12 @@ const Expenses = ({ openNew }) => {
         try {
             const expenseData = {
                 ...formData,
+                datePaid: normalizedDatePaid,
                 amountNet: formData.amountNet ? parseFloat(formData.amountNet) : null,
                 vatAmount: formData.vatAmount ? parseFloat(formData.vatAmount) : null,
                 amountGross: formData.amountGross ? parseFloat(formData.amountGross) : null,
-                taxYear: calculateTaxYear(formData.datePaid),
-                financialYear: calculateFinancialYear(formData.datePaid)
+                taxYear: calculateTaxYear(normalizedDatePaid),
+                financialYear: calculateFinancialYear(normalizedDatePaid)
             };
 
             let expenseId;
@@ -578,7 +605,7 @@ const Expenses = ({ openNew }) => {
                     ...prev,
                     supplier:        scan.vendor      || prev.supplier,
                     reference:       scan.invoiceRef  || prev.reference,
-                    datePaid:        scan.invoiceDate || prev.datePaid,
+                    datePaid:        normalizeDateForApi(scan.invoiceDate) || prev.datePaid,
                     amountNet:       totalNet   > 0 ? totalNet.toFixed(2)   : prev.amountNet,
                     vatAmount:       totalVat   > 0 ? totalVat.toFixed(2)   : prev.vatAmount,
                     amountGross:     totalGross > 0 ? totalGross.toFixed(2) : prev.amountGross,
