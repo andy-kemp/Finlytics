@@ -314,16 +314,31 @@ export async function createExpense(expense) {
         throw new Error(error.error || 'Failed to create expense');
     }
     
-    const result = await response.json();
-    const normalizedId = result?.id
+    const rawBody = await response.text();
+    let result;
+    try {
+        result = rawBody ? JSON.parse(rawBody) : {};
+    } catch {
+        result = rawBody;
+    }
+
+    const normalizedId =
+        (typeof result === 'number' ? result : undefined)
+        ?? (typeof result === 'string' && /^\d+$/.test(result.trim()) ? Number(result.trim()) : undefined)
+        ?? result?.id
         ?? result?.Id
         ?? result?.expenseId
         ?? result?.ExpenseId
         ?? result?.data?.id
         ?? result?.data?.Id
         ?? result?.data?.expenseId
-        ?? result?.data?.ExpenseId;
-    const normalizedResult = { ...result, id: normalizedId };
+        ?? result?.data?.ExpenseId
+        ?? result?.result?.id
+        ?? result?.result?.Id;
+
+    const normalizedResult = typeof result === 'object' && result !== null
+        ? { ...result, id: normalizedId }
+        : { success: true, id: normalizedId, raw: result };
     console.log('API success response:', normalizedResult);
     return normalizedResult;
 }

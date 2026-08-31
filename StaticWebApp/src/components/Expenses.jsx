@@ -306,6 +306,8 @@ const Expenses = ({ openNew }) => {
         }
     };
 
+    const hasUsableExpenseId = (id) => id !== undefined && id !== null && String(id).trim() !== '';
+
     const getVATRate = (vatApplicability) => {
         // Determine VAT rate based on applicability
         switch (vatApplicability) {
@@ -492,9 +494,9 @@ const Expenses = ({ openNew }) => {
             } else {
                 const result = await createExpense(expenseData);
                 expenseId = result?.id ?? result?.Id ?? result?.expenseId ?? result?.ExpenseId;
-                if (!expenseId) {
+                if (!hasUsableExpenseId(expenseId)) {
                     expenseId = await resolveCreatedExpenseId(expenseData);
-                    expenseIdResolvedFromFallback = !!expenseId;
+                    expenseIdResolvedFromFallback = hasUsableExpenseId(expenseId);
                 }
             }
 
@@ -514,7 +516,7 @@ const Expenses = ({ openNew }) => {
             // Intercept if no receipt and not already handled (declaration or reason on file)
             const hasReceipt = selectedFiles.length > 0 || existingAttachments.length > 0;
             const alreadyHandled = editingExpense?.hasMissingReceiptDeclaration || editingExpense?.noReceiptReason;
-            if (!formData.isDLA && !hasReceipt && !alreadyHandled && expenseId) {
+            if (!formData.isDLA && !hasReceipt && !alreadyHandled && hasUsableExpenseId(expenseId)) {
                 resetForm();
                 setReceiptRequiredModal({
                     savedId: expenseId,
@@ -525,7 +527,7 @@ const Expenses = ({ openNew }) => {
             }
 
             showToast('Expense saved successfully!', 'success');
-            if (!editingExpense && !expenseId) {
+            if (!editingExpense && !hasUsableExpenseId(expenseId)) {
                 showToast('Expense was saved, but no ID was returned yet. Please refresh before adding a no-receipt declaration.', 'warning');
             } else if (!editingExpense && expenseIdResolvedFromFallback) {
                 showToast('Expense saved. Declaration workflow linked via fallback ID match.', 'info');
