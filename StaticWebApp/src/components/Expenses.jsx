@@ -425,6 +425,9 @@ const Expenses = ({ openNew }) => {
     const handleSubmit = async (e) => {
         e.preventDefault();
         const normalizedDatePaid = normalizeDateForApi(formData.datePaid);
+        const normalizedRecurringNextDate = formData.isRecurring
+            ? normalizeDateForApi(formData.recurringNextDate)
+            : null;
 
         // ── Route isDLA saves straight into the DLA table ──────────────────
         if (formData.isDLA && !editingExpense) {
@@ -497,6 +500,10 @@ const Expenses = ({ openNew }) => {
             const expenseData = {
                 ...formData,
                 datePaid: normalizedDatePaid,
+                recurringFrequency: formData.isRecurring ? (formData.recurringFrequency || 'Monthly') : null,
+                recurringNextDate: formData.isRecurring
+                    ? (normalizedRecurringNextDate || null)
+                    : null,
                 amountNet: formData.amountNet ? parseFloat(formData.amountNet) : null,
                 vatAmount: formData.vatAmount ? parseFloat(formData.vatAmount) : null,
                 amountGross: formData.amountGross ? parseFloat(formData.amountGross) : null,
