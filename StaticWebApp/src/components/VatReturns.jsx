@@ -110,6 +110,11 @@ export default function VatReturns() {
 
     const [showAllYears, setShowAllYears] = useState(false);
     const [quarterAdjustments, setQuarterAdjustments] = useState({});
+    const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
+    const [adjustmentQuarter, setAdjustmentQuarter] = useState(null);
+    const [adjustmentBox1, setAdjustmentBox1] = useState('0');
+    const [adjustmentBox4, setAdjustmentBox4] = useState('0');
+    const [adjustmentNote, setAdjustmentNote] = useState('');
 
     // PDF confirmation upload state
     const [pdfModal, setPdfModal]               = useState(null); // { quarter, filed } or null
@@ -199,46 +204,53 @@ export default function VatReturns() {
         return Math.abs(a.box1) > 0.000001 || Math.abs(a.box4) > 0.000001 || !!a.note;
     };
 
-    const configureQuarterAdjustment = (q) => {
+    const openAdjustmentModal = (q) => {
         const current = getQuarterAdjustment(q);
-        const box1Raw = window.prompt(
-            `Adjustment for ${q.quarterLabel} (${q.monthsLabel})\nBox 1 adjustment (+/-). Use 0 for none.`,
-            String(current.box1 || 0)
-        );
-        if (box1Raw === null) return;
+        setAdjustmentQuarter(q);
+        setAdjustmentBox1(String(current.box1 || 0));
+        setAdjustmentBox4(String(current.box4 || 0));
+        setAdjustmentNote(current.note || '');
+        setShowAdjustmentModal(true);
+    };
 
-        const box4Raw = window.prompt(
-            `Adjustment for ${q.quarterLabel} (${q.monthsLabel})\nBox 4 adjustment (+/-). Use 0 for none.`,
-            String(current.box4 || 0)
-        );
-        if (box4Raw === null) return;
+    const saveQuarterAdjustment = () => {
+        if (!adjustmentQuarter) return;
 
-        const noteRaw = window.prompt(
-            'Short reason (e.g. Q1 correction carried into this return):',
-            current.note || ''
-        );
-        if (noteRaw === null) return;
-
-        const box1 = Number.parseFloat(box1Raw);
-        const box4 = Number.parseFloat(box4Raw);
+        const box1 = Number.parseFloat(adjustmentBox1);
+        const box4 = Number.parseFloat(adjustmentBox4);
         if (Number.isNaN(box1) || Number.isNaN(box4)) {
             showToast('Adjustment values must be valid numbers', 'error');
             return;
         }
 
-        const key = getQuarterKey(q);
+        const key = getQuarterKey(adjustmentQuarter);
         const next = { ...quarterAdjustments };
-        const note = noteRaw.trim();
+        const note = adjustmentNote.trim();
         if (Math.abs(box1) < 0.000001 && Math.abs(box4) < 0.000001 && !note) {
             delete next[key];
             persistQuarterAdjustments(next);
-            showToast(`${q.quarterLabel} adjustment removed`);
+            setShowAdjustmentModal(false);
+            setAdjustmentQuarter(null);
+            showToast(`${adjustmentQuarter.quarterLabel} adjustment removed`);
             return;
         }
 
         next[key] = { box1, box4, note };
         persistQuarterAdjustments(next);
-        showToast(`${q.quarterLabel} adjustment saved`);
+        setShowAdjustmentModal(false);
+        setAdjustmentQuarter(null);
+        showToast(`${adjustmentQuarter.quarterLabel} adjustment saved`);
+    };
+
+    const removeQuarterAdjustment = () => {
+        if (!adjustmentQuarter) return;
+        const key = getQuarterKey(adjustmentQuarter);
+        const next = { ...quarterAdjustments };
+        delete next[key];
+        persistQuarterAdjustments(next);
+        setShowAdjustmentModal(false);
+        setAdjustmentQuarter(null);
+        showToast(`${adjustmentQuarter.quarterLabel} adjustment removed`);
     };
 
     // Check HMRC connection status on mount + handle OAuth callback redirect
@@ -1476,7 +1488,7 @@ export default function VatReturns() {
                                             ) : (
                                                 <div style={{ display: 'flex', gap: 4, justifyContent: 'center', flexWrap: 'wrap' }}>
                                                     <button
-                                                        onClick={() => configureQuarterAdjustment(q)}
+                                                        onClick={() => openAdjustmentModal(q)}
                                                         className="btn-secondary"
                                                         style={{ fontSize: '0.82rem', padding: '4px 10px', background: '#fff8e1', border: '1px solid #ffb300', color: '#8a6d00' }}
                                                         title="Add prior-period correction to this quarter's export and filing totals"
@@ -1697,6 +1709,82 @@ export default function VatReturns() {
                         </div>
                         <div style={{ padding: '12px 24px', borderTop: '1px solid #dee2e6', textAlign: 'right' }}>
                             <button className="btn-secondary" onClick={() => setVerifyModal(null)}>Close</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showAdjustmentModal && adjustmentQuarter && (
+                <div className="modal-overlay" onClick={() => setShowAdjustmentModal(false)}>
+                    <div className="modal-content" style={{ maxWidth: 520 }} onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2>⚖️ VAT Adjustment - {adjustmentQuarter.quarterLabel}</h2>
+                            <button className="modal-close" onClick={() => setShowAdjustmentModal(false)}>✕</button>
+                        </div>
+                        <div className="modal-body" style={{ padding: '20px 24px' }}>
+                            <p style={{ color: '#6c757d', marginTop: 0, marginBottom: 16, fontSize: '0.9rem' }}>
+                                {adjustmentQuarter.monthsLabel}
+                            </p>
+                            <div style={{ marginBottom: 16, padding: '12px 14px', background: '#fff8e1', border: '1px solid #ffe082', borderRadius: 8, color: '#7c5a00', fontSize: '0.86rem' }}>
+                                Use this for prior-period corrections you want carried into this return. Enter positive or negative values for the VAT100 boxes.
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+                                <div className="form-group" style={{ margin: 0 }}>
+                                    <label className="form-label" style={{ fontWeight: 600 }}>Box 1 adjustment</label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        className="form-control"
+                                        value={adjustmentBox1}
+                                        onChange={e => setAdjustmentBox1(e.target.value)}
+                                        placeholder="0.00"
+                                    />
+                                    <div style={{ fontSize: '0.78rem', color: '#6c757d', marginTop: 4 }}>
+                                        VAT due on sales and outputs
+                                    </div>
+                                </div>
+                                <div className="form-group" style={{ margin: 0 }}>
+                                    <label className="form-label" style={{ fontWeight: 600 }}>Box 4 adjustment</label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        className="form-control"
+                                        value={adjustmentBox4}
+                                        onChange={e => setAdjustmentBox4(e.target.value)}
+                                        placeholder="0.00"
+                                    />
+                                    <div style={{ fontSize: '0.78rem', color: '#6c757d', marginTop: 4 }}>
+                                        VAT reclaimed on purchases and inputs
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="form-group" style={{ marginBottom: 0 }}>
+                                <label className="form-label" style={{ fontWeight: 600 }}>Reason</label>
+                                <textarea
+                                    className="form-control"
+                                    rows={3}
+                                    value={adjustmentNote}
+                                    onChange={e => setAdjustmentNote(e.target.value)}
+                                    placeholder="e.g. Q1 correction carried into this return"
+                                />
+                            </div>
+                        </div>
+                        <div className="modal-footer" style={{ justifyContent: 'space-between' }}>
+                            <div>
+                                {hasQuarterAdjustment(adjustmentQuarter) && (
+                                    <button className="btn-secondary" onClick={removeQuarterAdjustment} style={{ background: '#fff5f5', border: '1px solid #f5c6cb', color: '#b02a37' }}>
+                                        Remove Adjustment
+                                    </button>
+                                )}
+                            </div>
+                            <div style={{ display: 'flex', gap: 8 }}>
+                                <button className="btn-secondary" onClick={() => setShowAdjustmentModal(false)}>
+                                    Cancel
+                                </button>
+                                <button className="btn-primary" onClick={saveQuarterAdjustment}>
+                                    Save Adjustment
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
