@@ -327,15 +327,17 @@ const Expenses = ({ openNew }) => {
     const hasUsableExpenseId = (id) => id !== undefined && id !== null && String(id).trim() !== '';
 
     const getVATRate = (vatApplicability) => {
-        // Determine VAT rate based on applicability
-        switch (vatApplicability) {
-            case 'Standard':
+        switch (String(vatApplicability || '').trim().toLowerCase()) {
+            case 'standard':
                 return 20;
-            case 'Reduced':
+            case 'reduced':
                 return 5;
-            case 'Zero-rated':
-            case 'Exempt':
-            case 'Outside Scope':
+            case 'zero':
+            case 'zero-rated':
+            case 'exempt':
+            case 'outside scope':
+            case 'not applicable':
+            case 'no vat':
                 return 0;
             default:
                 return 20;

@@ -337,16 +337,17 @@ const DLA = ({ openNew }) => {
             // --- Smart amount calculations ---
             if (name === 'vatExempt') {
                 if (checked) {
-                    // VAT exempt: zero out VAT, Gross = Net
+                    // Keep the receipt total when VAT is not reclaimable.
+                    const gross = parseFloat(updated.amountGross) || parseFloat(updated.amountNet) || 0;
                     updated.vatAmount = '0.00';
-                    const net = parseFloat(updated.amountNet) || 0;
-                    updated.amountGross = net.toFixed(2);
+                    updated.amountNet = gross.toFixed(2);
+                    updated.amountGross = gross.toFixed(2);
                 } else {
-                    // Re-enabling VAT: recalculate from current Net at 20%
-                    const net = parseFloat(updated.amountNet) || 0;
-                    const vat = Math.round(net * 0.2 * 100) / 100;
-                    updated.vatAmount = vat.toFixed(2);
-                    updated.amountGross = (net + vat).toFixed(2);
+                    const gross = parseFloat(updated.amountGross) || parseFloat(updated.amountNet) || 0;
+                    const net = Math.round((gross / 1.2) * 100) / 100;
+                    updated.vatAmount = (gross - net).toFixed(2);
+                    updated.amountNet = net.toFixed(2);
+                    updated.amountGross = gross.toFixed(2);
                 }
             } else if (name === 'amountNet') {
                 const net = parseFloat(nextValue) || 0;
@@ -1201,11 +1202,18 @@ const DLA = ({ openNew }) => {
             if (i !== idx) return line;
             const next = { ...line, [field]: value };
             if (field === 'vatExempt') {
-                if (value) { next.vatAmount = '0.00'; next.amountGross = next.amountNet; }
+                if (value) {
+                    const gross = parseFloat(next.amountGross) || parseFloat(next.amountNet) || 0;
+                    next.vatAmount = '0.00';
+                    next.amountNet = gross.toFixed(2);
+                    next.amountGross = gross.toFixed(2);
+                }
                 else {
-                    const vat = Math.round((parseFloat(next.amountNet) || 0) * 0.2 * 100) / 100;
-                    next.vatAmount = vat.toFixed(2);
-                    next.amountGross = ((parseFloat(next.amountNet) || 0) + vat).toFixed(2);
+                    const gross = parseFloat(next.amountGross) || parseFloat(next.amountNet) || 0;
+                    const net = Math.round((gross / 1.2) * 100) / 100;
+                    next.vatAmount = (gross - net).toFixed(2);
+                    next.amountNet = net.toFixed(2);
+                    next.amountGross = gross.toFixed(2);
                 }
             } else if (field === 'amountNet') {
                 const net = parseFloat(value) || 0;
