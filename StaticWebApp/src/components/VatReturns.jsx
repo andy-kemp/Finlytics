@@ -16,58 +16,19 @@ import {
     submitVatReturnToHmrc,
     viewHmrcVatReturn
 } from '../services/apiService';
-
-const VAT_ADJUSTMENTS_STORAGE_KEY = 'finlytics.vatQuarterAdjustments.v1';
+import {
+    VAT_ADJUSTMENTS_STORAGE_KEY,
+    calculateVatForQuarter,
+    getFiledForQuarter as findFiledForQuarter,
+    getVatDisplayQuarters,
+    getVatQuarterPeriods
+} from '../utils/vatCalculations';
 
 function getQuarterKey(q) {
     return new Date(q.quarterStartDate).toISOString().slice(0, 10);
 }
 
 // ── Quarter helpers ──────────────────────────────────────────────────────────
-
-/**
- * Given vatQuarterStartMonth (1-12) and a reference date,
- * compute the last N quarter periods (most-recent first).
- */
-function getVatQuarterPeriods(vatQuarterStartMonth = 1, numQuarters = 8) {
-    const startM = (vatQuarterStartMonth - 1 + 12) % 12; // 0-indexed
-    const now = new Date();
-
-    // Months elapsed since the most recent quarter-start month
-    const monthsFromLastStart = (now.getMonth() - startM + 12) % 12;
-    const monthsBack = monthsFromLastStart % 3; // offset within current quarter
-
-    const currentQStart = new Date(now.getFullYear(), now.getMonth() - monthsBack, 1);
-
-    const quarters = [];
-    for (let i = 0; i < numQuarters; i++) {
-        const qStart = new Date(currentQStart.getFullYear(), currentQStart.getMonth() - i * 3, 1);
-        const qEnd   = new Date(qStart.getFullYear(), qStart.getMonth() + 3, 0, 23, 59, 59, 999);
-
-        // VAT fiscal year: most recent occurrence of startM on or before qStart
-        let vatYearStart = new Date(qStart.getFullYear(), startM, 1);
-        if (vatYearStart > qStart) vatYearStart.setFullYear(vatYearStart.getFullYear() - 1);
-
-        const monthsIn = (qStart.getFullYear() - vatYearStart.getFullYear()) * 12
-                       + (qStart.getMonth() - vatYearStart.getMonth());
-        const qNum = Math.floor(monthsIn / 3) + 1;
-
-        const vy = vatYearStart.getFullYear();
-        const vatYearLabel = `${vy}/${String(vy + 1).slice(-2)}`;
-
-        const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        const monthsLabel = `${MONTHS[qStart.getMonth()]} – ${MONTHS[qEnd.getMonth()]} ${qEnd.getFullYear()}`;
-
-        quarters.push({
-            quarterLabel: `Q${qNum} ${vatYearLabel}`,
-            monthsLabel,
-            quarterStartDate: qStart.toISOString(),
-            quarterEndDate:   qEnd.toISOString(),
-            isCurrent: i === 0
-        });
-    }
-    return quarters;
-}
 
 /** Sum VAT for items whose dateField falls within [start, end] */
 function sumVatInPeriod(items, dateField, vatField, start, end) {
@@ -460,177 +421,17 @@ export default function VatReturns() {
     };
 
     const calcForQuarter = (q) => {
-        const start = new Date(q.quarterStartDate);
-        const end   = new Date(q.quarterEndDate);
-
-        // Inception/VAT-registration reference date for pre-registration reclaim rules.
-        // HMRC VAT Notice 700/1: goods purchased up to 4 years before VAT registration
-        // can be reclaimed in the first VAT return.
-        const inceptionDate = settings?.incorporationDate
-            ? new Date(settings.incorporationDate)
-            : settings?.companyInceptionDate
-                ? new Date(settings.companyInceptionDate)
-                : null;
-
-        // Use the same lower-bound priority as displayQuarters filter so that
-        // isOldestDisplayedQuarter matches what's actually shown on screen.
-        const displayLowerBound = settings?.vatEffectiveDate
-            ? new Date(settings.vatEffectiveDate)
-            : inceptionDate;
-
-        // Is this the oldest displayed quarter?
-        // Directly compare against displayQuarters (defined later in scope but always
-        // evaluated before calcForQuarter is first called). This avoids heuristic
-        // date maths that can flag multiple quarters as "oldest".
-        const isOldestDisplayedQuarter = displayQuarters.length > 0 &&
-            q.quarterStartDate === displayQuarters.reduce(
-                (min, dq) => dq.quarterStartDate < min ? dq.quarterStartDate : min,
-                displayQuarters[0].quarterStartDate
-            );
-
-        // VAT accounting method: 'invoice' = count by issue date; default (cash) = count by payment date.
-        const usePaymentDate = settings?.vatAccountingMethod !== 'invoice';
-
-        // "First VAT quarter" = the quarter whose period contains the inception date,
-        // or the oldest displayed quarter if inception predates it.
-        // Pre-registration entries belong here, not scattered in historical quarters.
-        const isFirstVatQuarter = inceptionDate
-            ? (start <= inceptionDate && end >= inceptionDate)
-                || isOldestDisplayedQuarter
-            : isOldestDisplayedQuarter;
-
-        // 4-year lookback cutoff for pre-registration goods (DLA & expenses)
-        const fourYearCutoff = inceptionDate
-            ? new Date(inceptionDate.getFullYear() - 4, inceptionDate.getMonth(), inceptionDate.getDate())
-            : null;
-
-        // VAT on sales.
-        // Cash accounting: count by payment date (Paid invoices only).
-        // Standard accounting: count by issue date, absorbing pre-inception and stub-period invoices.
-        const vatIn = invoices.reduce((sum, inv) => {
-            if (usePaymentDate) {
-                // Cash accounting — only Paid invoices, counted by payment date
-                if (!inv.datePaid || inv.status !== 'Paid') return sum;
-                const d = new Date(inv.datePaid);
-                if (d >= start && d <= end) return sum + (inv.vatAmount || 0);
-                return sum;
-            }
-            // Standard (invoice date) accounting
-            if (!inv.dateIssued) return sum;
-            const d = new Date(inv.dateIssued);
-            const isPreInception = inceptionDate && d < inceptionDate;
-            // Post-inception entry in its natural period
-            if (!isPreInception && d >= start && d <= end) return sum + (inv.vatAmount || 0);
-            // Pre-inception: claim in first VAT quarter only
-            if (isPreInception && isFirstVatQuarter) return sum + (inv.vatAmount || 0);
-            // Stub period: between inception and first quarter start — absorb into first quarter
-            if (isFirstVatQuarter && !isPreInception && inceptionDate && d >= inceptionDate && d < start)
-                return sum + (inv.vatAmount || 0);
-            // Fallback when no inception date configured
-            if (!inceptionDate && isOldestDisplayedQuarter && d < start) return sum + (inv.vatAmount || 0);
-            return sum;
-        }, 0);
-
-        // Input VAT on expenses — first-VAT-quarter absorbs pre-registration expenses (4-year rule).
-        // NonCT items (e.g. client entertainment) have no VAT relief — excluded from reclaim.
-        const vatOutExpenses = expenses.filter(e => e.ctTag !== 'NonCT').reduce((sum, e) => {
-            if (!e.entryDate) return sum;
-            const d = new Date(e.entryDate);
-            const isPreInception = inceptionDate && d < inceptionDate;
-            // Post-inception entry in its natural period
-            if (!isPreInception && d >= start && d <= end) return sum + (e.vatAmount || 0);
-            // Pre-registration: claim in first VAT quarter only, within 4-year lookback
-            if (isPreInception && isFirstVatQuarter && (!fourYearCutoff || d >= fourYearCutoff))
-                return sum + (e.vatAmount || 0);
-            // Stub period: between inception and first quarter start — absorb into first quarter
-            if (isFirstVatQuarter && !isPreInception && inceptionDate && d >= inceptionDate && d < start)
-                return sum + (e.vatAmount || 0);
-            // Fallback
-            if (!inceptionDate && isOldestDisplayedQuarter && d < start) return sum + (e.vatAmount || 0);
-            return sum;
-        }, 0);
-
-        // DLA — first-VAT-quarter absorbs pre-registration director-paid costs (4-year rule).
-        // HMRC allows reclaiming VAT on goods purchased up to 4 years before VAT registration.
-        // NonCT items (e.g. client entertainment) have no VAT relief — excluded from reclaim.
-        const vatOutDla = dlaEntries
-            .filter(e => e.direction === 'OwedToDirector' && e.ctTag !== 'NonCT')
-            .reduce((sum, e) => {
-                if (!e.entryDate) return sum;
-                const d = new Date(e.entryDate);
-                const isPreInception = inceptionDate && d < inceptionDate;
-                // Post-inception entry in its natural period
-                const inPeriod = !isPreInception && d >= start && d <= end;
-                // Pre-registration: first VAT quarter only, within 4-year lookback
-                const preRegistration = isPreInception && isFirstVatQuarter
-                    && (!fourYearCutoff || d >= fourYearCutoff);
-                // Stub period: between inception and first quarter start — absorb into first quarter
-                const stubPeriod = isFirstVatQuarter && !isPreInception && inceptionDate
-                    && d >= inceptionDate && d < start;
-                // Fallback when no inception date configured
-                const preInception = !inceptionDate && isOldestDisplayedQuarter && d < start;
-                if (inPeriod || preRegistration || stubPeriod || preInception) return sum + (e.vatAmount || 0);
-                return sum;
-            }, 0);
-
-        // Collect NonCT items that fall in this quarter but are excluded from VAT reclaim
-        const vatExcludedItems = [
-            ...expenses.filter(e => e.ctTag === 'NonCT' && e.vatAmount).filter(e => {
-                if (!e.entryDate) return false;
-                const d = new Date(e.entryDate);
-                const isPreInception = inceptionDate && d < inceptionDate;
-                if (!isPreInception && d >= start && d <= end) return true;
-                if (isPreInception && isFirstVatQuarter && (!fourYearCutoff || d >= fourYearCutoff)) return true;
-                if (isFirstVatQuarter && !isPreInception && inceptionDate && d >= inceptionDate && d < start) return true;
-                if (!inceptionDate && isOldestDisplayedQuarter && d < start) return true;
-                return false;
-            }).map(e => ({ ...e, source: 'Expense' })),
-            ...dlaEntries.filter(e => e.direction === 'OwedToDirector' && e.ctTag === 'NonCT' && e.vatAmount).filter(e => {
-                if (!e.entryDate) return false;
-                const d = new Date(e.entryDate);
-                const isPreInception = inceptionDate && d < inceptionDate;
-                const inPeriod = !isPreInception && d >= start && d <= end;
-                const preRegistration = isPreInception && isFirstVatQuarter && (!fourYearCutoff || d >= fourYearCutoff);
-                const stubPeriod = isFirstVatQuarter && !isPreInception && inceptionDate && d >= inceptionDate && d < start;
-                const preInception = !inceptionDate && isOldestDisplayedQuarter && d < start;
-                return inPeriod || preRegistration || stubPeriod || preInception;
-            }).map(e => ({ ...e, source: 'DLA' }))
-        ];
-        const vatExcludedTotal = vatExcludedItems.reduce((s, e) => s + (e.vatAmount || 0), 0);
-
-        const adjustment = getQuarterAdjustment(q);
-        const vatInAdjusted = vatIn + adjustment.box1;
-        const vatOutBase = vatOutExpenses + vatOutDla;
-        const vatOutAdjusted = vatOutBase + adjustment.box4;
-        const vatOwed = vatInAdjusted - vatOutAdjusted;
-        return {
-            vatIn: vatInAdjusted,
-            vatOut: vatOutAdjusted,
-            vatInBase: vatIn,
-            vatOutBase,
-            adjustment,
-            vatOutExpenses,
-            vatOutDla,
-            vatOwed,
-            isOldestDisplayedQuarter,
-            vatExcludedItems,
-            vatExcludedTotal
-        };
-    };
-
-    const getFiledForQuarter = (q) => {
-        // Return the most-recently filed record (highest filedDate) to handle
-        // cases where a quarter was submitted multiple times.
-        const matches = filedReturns.filter(fr => {
-            const frStart = new Date(fr.quarterStartDate);
-            const qStart  = new Date(q.quarterStartDate);
-            return Math.abs(frStart - qStart) < 86400000; // within 1 day
+        return calculateVatForQuarter(q, {
+            invoices,
+            expenses,
+            dlaEntries,
+            settings,
+            displayQuarters,
+            adjustment: getQuarterAdjustment(q)
         });
-        if (matches.length === 0) return undefined;
-        return matches.reduce((latest, fr) =>
-            new Date(fr.filedDate) > new Date(latest.filedDate) ? fr : latest
-        );
     };
+
+    const getFiledForQuarter = (q) => findFiledForQuarter(q, filedReturns);
 
     const isCurrentQuarter = (q) => q.isCurrent;
     const isPastQuarter     = (q) => !q.isCurrent;
@@ -638,22 +439,7 @@ export default function VatReturns() {
     // Only show quarters that overlap with the VAT-effective date onwards.
     // Use VAT effective date if available; fallback to inception/incorporation.
     // Always keep quarters that already have a filed record (historical data).
-    const vatLowerBoundForFilter = settings?.vatEffectiveDate
-        ? new Date(settings.vatEffectiveDate)
-        : settings?.companyInceptionDate
-            ? new Date(settings.companyInceptionDate)
-            : settings?.incorporationDate
-                ? new Date(settings.incorporationDate)
-                : null;
-
-    const displayQuarters = vatLowerBoundForFilter
-        ? quarters.filter(q => {
-            const qStart = new Date(q.quarterStartDate);
-            const qEnd = new Date(q.quarterEndDate);
-            const overlapsVatTimeline = qEnd >= vatLowerBoundForFilter || qStart >= vatLowerBoundForFilter;
-            return overlapsVatTimeline || !!getFiledForQuarter(q);
-        })
-        : quarters;
+    const displayQuarters = getVatDisplayQuarters(quarters, settings, filedReturns);
 
     const missedPastQuarters = displayQuarters
         .filter(q => isPastQuarter(q) && !getFiledForQuarter(q))

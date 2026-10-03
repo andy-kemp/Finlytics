@@ -14,6 +14,12 @@ import {
     getPayrollSettings,
     getPayrollRuns
 } from '../services/apiService';
+import {
+    getStoredVatAdjustments,
+    getUnfiledVatBalance,
+    getVatQuarterPeriods,
+    isVatReclaimBlocked as isVatBlocked
+} from '../utils/vatCalculations';
 
 export default function Dashboard({ onNavigate }) {
     const [loading, setLoading] = useState(true);
@@ -181,17 +187,6 @@ export default function Dashboard({ onNavigate }) {
             const dlaOwedToCompany = dlaEntries
                 .filter(e => e.direction === 'OwedToCompany')
                 .reduce((sum, e) => sum + (e.remainingBalance ?? e.amountGross ?? 0), 0);
-            // HMRC VAT blocking: items without CT relief also have no VAT relief.
-            // - Client entertainment (SI 1992/3222 Business Entertainment Regulations): blocked
-            // - Trivial benefits (s.323A ITEPA): CT-deductible but VAT is not reclaimable
-            // - NonCT items: no CT relief → no VAT relief (gross still counts in DLA total)
-            const isVatBlocked = (item) => {
-                const cat = (item.category || '').toLowerCase();
-                return cat.includes('entertainment') ||
-                       cat === 'trivial benefit' ||
-                       item.isTrivialBenefit === true ||
-                       item.ctTag === 'NonCT';
-            };
             // DLA input VAT (OwedToDirector = director paid company expense = reclaimable)
             // Excludes entertainment/NonCT entries per HMRC Business Entertainment Regulations
             const dlaVatReclaimable = dlaEntries
@@ -208,8 +203,16 @@ export default function Dashboard({ onNavigate }) {
                 dlaEntries.filter(e => e.direction === 'OwedToDirector' && isVatBlocked(e))
                     .reduce((sum, e) => sum + (e.vatAmount || 0), 0);
             const filedVatNet = filedReturns.reduce((sum, fr) => sum + (fr.vatOwed || 0), 0);
-            // Unfiled VAT = (sales VAT - expenses VAT - DLA input VAT) - already filed
-            const unfiledVatBalance = (allInvoiceVat - allExpenseVat - dlaVatReclaimable) - filedVatNet;
+            const vatQuarters = getVatQuarterPeriods(settings?.vatQuarterStartMonth || 1, 40);
+            const unfiledVatBalance = getUnfiledVatBalance({
+                quarters: vatQuarters,
+                invoices,
+                expenses,
+                dlaEntries,
+                filedReturns,
+                settings,
+                adjustments: getStoredVatAdjustments()
+            });
             const estimatedVatOwed = Math.max(0, unfiledVatBalance);
             const estimatedVatReclaim = Math.max(0, -unfiledVatBalance);
 
@@ -716,7 +719,7 @@ export default function Dashboard({ onNavigate }) {
                             Est. owed: {formatCurrency(metrics.estimatedVatOwed || 0)} | Est. reclaim: {formatCurrency(metrics.estimatedVatReclaim || 0)}
                         </div>
                         <div className="metric-detail">
-                            Filed: {formatCurrency(metrics.filedVatNet || 0)} | All-time In: {formatCurrency(metrics.allVatIn || 0)} | Out: {formatCurrency(metrics.allVatOut || 0)}
+                            Open quarters only · All-time In: {formatCurrency(metrics.allVatIn || 0)} | Out: {formatCurrency(metrics.allVatOut || 0)}
                         </div>
                     </div>
                 </div>
