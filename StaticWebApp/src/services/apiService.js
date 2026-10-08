@@ -1403,6 +1403,13 @@ export async function getBankAccounts() {
     return response.json();
 }
 
+export async function getCashBaseline(accountId) {
+    const headers = await getAuthHeaders();
+    const response = await fetch(`${API_BASE}/bank/accounts/${encodeURIComponent(accountId)}/cash-baseline`, { headers });
+    if (!response.ok) throw new Error(`Failed to load cash baseline (${response.status})`);
+    return response.json();
+}
+
 export async function createBankAccount(account) {
     const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE}/bank/accounts`, {

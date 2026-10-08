@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import TrivialBenefitModal from './TrivialBenefitModal';
 import QuickInvoice from './QuickInvoice';
 import { calculateRecordedTradingCash } from '../utils/cashCalculations.mjs';
+import { calculateMainAccountBookBalance, loadMainAccountCashBaseline } from '../utils/cashBaseline.mjs';
 import {
     getInvoices,
     getExpenses,
@@ -14,7 +15,10 @@ import {
     getAllDlaPayments,
     getBillsSummary,
     getPayrollSettings,
-    getPayrollRuns
+    getPayrollRuns,
+    getBankAccounts,
+    getCashBaseline,
+    getBankTransactionsByAccount
 } from '../services/apiService';
 import {
     getStoredVatAdjustments,
@@ -151,7 +155,7 @@ export default function Dashboard({ onNavigate }) {
             if (metrics) { setRefreshing(true); } else { setLoading(true); }
             
             // Fire all fetches in parallel — no sequential waterfalls
-            const [invoicesRaw, expensesRaw, companyAggregates, settings, filedReturnsRaw, dlaEntriesRaw, dlaPaymentsRaw, ytdAggregates, billsSummary, payrollSettings, payrollRunsRaw, ledgerEntriesRaw] = await Promise.all([
+            const [invoicesRaw, expensesRaw, companyAggregates, settings, filedReturnsRaw, dlaEntriesRaw, dlaPaymentsRaw, ytdAggregates, billsSummary, payrollSettings, payrollRunsRaw, ledgerEntriesRaw, cashBaselineState] = await Promise.all([
                 getInvoices(),
                 getExpenses(),
                 getCompanyAggregates(getCurrentPeriodKey()).catch(() => ({})),
@@ -163,7 +167,8 @@ export default function Dashboard({ onNavigate }) {
                 getBillsSummary().catch(() => null),
                 getPayrollSettings().catch(() => null),
                 getPayrollRuns().catch(() => []),
-                getCompanyLedger('all')
+                getCompanyLedger('all'),
+                loadMainAccountCashBaseline({ getBankAccounts, getCashBaseline, getBankTransactionsByAccount })
             ]);
 
             const invoices = Array.isArray(invoicesRaw) ? invoicesRaw : [];
@@ -324,6 +329,18 @@ export default function Dashboard({ onNavigate }) {
             const taxProtectedCash = vatSetAside + corpTaxSetAside;
             const operatingCashEstimate = currentBalance - taxProtectedCash;
             const totalCompanyCashEstimate = currentBalance;
+            let mainAccountBookBalance = null;
+            let cashBaselineError = cashBaselineState.error;
+            const cashBaseline = cashBaselineState.baseline;
+            if (cashBaseline && !cashBaselineError) {
+                try {
+                    mainAccountBookBalance = calculateMainAccountBookBalance(recordedCash, cashBaseline, cashBaselineState.transactions);
+                } catch (error) {
+                    cashBaselineError = error.message;
+                }
+            }
+            const sourceDifference = cashBaseline && Number.isFinite(Number(cashBaseline.recordedCashAtCreation))
+                ? Math.round((currentBalance - Number(cashBaseline.recordedCashAtCreation)) * 100) / 100 : null;
 
             setMetrics({
                 income, incomeNet, incomeVAT,
@@ -355,6 +372,10 @@ export default function Dashboard({ onNavigate }) {
                 taxProtectedCash,
                 operatingCashEstimate,
                 totalCompanyCashEstimate,
+                mainAccountBookBalance,
+                cashBaseline,
+                cashBaselineError,
+                sourceDifference,
                 recordedCashIn: recordedCash.cashIn,
                 recordedCashOut: recordedCash.cashOut,
                 recordedCashBreakdown: recordedCash.breakdown,
@@ -801,7 +822,7 @@ export default function Dashboard({ onNavigate }) {
                 <div className="metric-card balance">
                     <div className="metric-icon">🏦</div>
                     <div className="metric-content">
-                        <div className="metric-label">Cash After Tax Reserves (Est.)</div>
+                        <div className="metric-label">Company Cash After Estimated Tax</div>
                         <div className={`metric-value ${metrics.operatingCashEstimate >= 0 ? 'positive' : 'negative'}`}>
                             {formatCurrency(metrics.operatingCashEstimate)}
                         </div>
@@ -814,11 +835,16 @@ export default function Dashboard({ onNavigate }) {
                 <div className="metric-card balance">
                     <div className="metric-icon">🧮</div>
                     <div className="metric-content">
-                        <div className="metric-label">Recorded Cash Balance</div>
-                        <div className={`metric-value ${metrics.totalCompanyCashEstimate >= 0 ? 'positive' : 'negative'}`}>
-                            {formatCurrency(metrics.totalCompanyCashEstimate)}
+                        <div className="metric-label">{metrics.mainAccountBookBalance !== null ? 'Main Account Book Balance' : metrics.cashBaselineError ? 'Recorded Company Cash' : 'Recorded Cash Balance'}</div>
+                        <div className={`metric-value ${(metrics.mainAccountBookBalance ?? metrics.totalCompanyCashEstimate) >= 0 ? 'positive' : 'negative'}`}>
+                            {formatCurrency(metrics.mainAccountBookBalance ?? metrics.totalCompanyCashEstimate)}
                         </div>
-                        <div className="metric-detail">All-time in: {formatCurrency(metrics.recordedCashIn)} | Out: {formatCurrency(metrics.recordedCashOut)}</div>
+                        {metrics.mainAccountBookBalance !== null ? <>
+                            <div className="metric-detail">Baseline + recorded changes | Baseline date: {String(metrics.cashBaseline.asOfDate).slice(0, 10)}</div>
+                            <div className="metric-detail">Statement baseline: {formatCurrency(metrics.cashBaseline.statementBalance)}</div>
+                            {Array.isArray(metrics.cashBaseline.pendingExpenses) && <div className="metric-detail">Baseline includes {formatCurrency(metrics.cashBaseline.pendingExpenses.reduce((total, expense) => total + Math.round(Number(expense.amount) * 100), 0) / 100)} pending expenses at creation</div>}
+                        </> : <div className="metric-detail">All-time in: {formatCurrency(metrics.recordedCashIn)} | Out: {formatCurrency(metrics.recordedCashOut)}</div>}
+                        {metrics.cashBaselineError && <div className="metric-detail" role="alert" style={{ color: '#b91c1c' }}>Main-account book balance unavailable: {metrics.cashBaselineError}. Company cash only.</div>}
                         {metrics.cashPaymentWarnings.length > 0 && <div className="metric-detail" style={{ color: '#b91c1c' }}>{metrics.cashPaymentWarnings.length} DLA payment discrepancies</div>}
                     </div>
                 </div>
@@ -854,7 +880,7 @@ export default function Dashboard({ onNavigate }) {
             </div>
 
             <details style={{ margin: '0 0 1rem', padding: '0.75rem 0', borderTop: '1px solid #cbd5e1' }}>
-                <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Recorded Cash Breakdown{metrics.cashPaymentWarnings.length > 0 ? ' - reconciliation required' : ''}</summary>
+                <summary style={{ cursor: 'pointer', fontWeight: 600 }}>{metrics.mainAccountBookBalance !== null ? `Main Account Book Balance: ${formatCurrency(metrics.mainAccountBookBalance)} - Cash Breakdown` : 'Recorded Company Cash Breakdown'}{metrics.cashPaymentWarnings.length > 0 ? ' - reconciliation required' : ''}</summary>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem', marginTop: '0.75rem' }}>
                     <dl style={{ margin: 0 }}>
                         {[
@@ -865,10 +891,35 @@ export default function Dashboard({ onNavigate }) {
                             ['DLA repayments paid', -metrics.recordedCashBreakdown.directorRepayments],
                             ['Loans to directors', -metrics.recordedCashBreakdown.directorLoans],
                             ['Other ledger payments', -metrics.recordedCashBreakdown.ledgerCashOut],
-                            ['Recorded balance', metrics.totalCompanyCashEstimate]
+                            ['Historical recorded company cash', metrics.totalCompanyCashEstimate]
                         ].map(([label, amount]) => <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', padding: '0.25rem 0' }}><dt>{label}</dt><dd style={{ margin: 0, whiteSpace: 'nowrap' }}>{formatCurrency(amount)}</dd></div>)}
                     </dl>
                     <div>
+                        {metrics.cashBaseline && <section aria-label="Cash baseline audit" style={{ marginBottom: '1rem', overflowWrap: 'anywhere' }}>
+                            <strong>Audited main-account baseline</strong>
+                            <dl style={{ margin: '0.5rem 0' }}>
+                                {[
+                                    ['Baseline book balance', metrics.cashBaseline.bookBalance],
+                                    ['Statement balance at baseline', metrics.cashBaseline.statementBalance],
+                                    ['Recorded company cash at snapshot', metrics.cashBaseline.recordedCashAtCreation],
+                                    ['Historical reconciliation difference', Number(metrics.cashBaseline.recordedCashAtCreation) - Number(metrics.cashBaseline.bookBalance)],
+                                    ['Recorded changes since snapshot (source difference)', metrics.sourceDifference],
+                                    ...(metrics.mainAccountBookBalance !== null ? [
+                                        ['Net main-account internal transfers since baseline', Math.round((metrics.mainAccountBookBalance - Number(metrics.cashBaseline.bookBalance) - metrics.sourceDifference) * 100) / 100],
+                                        ['Main account book balance', metrics.mainAccountBookBalance]
+                                    ] : [])
+                                ].map(([label, amount]) => <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', padding: '0.25rem 0' }}><dt>{label}</dt><dd style={{ margin: 0, whiteSpace: 'nowrap' }}>{formatCurrency(amount)}</dd></div>)}
+                            </dl>
+                            <div>As of: {String(metrics.cashBaseline.asOfDate).slice(0, 10)} | Snapshot: {metrics.cashBaseline.snapshotAtUtc}</div>
+                            <div>Reason: {metrics.cashBaseline.reason}</div>
+                            <div>Source snapshot hash: {metrics.cashBaseline.sourceSnapshotHash}</div>
+                            <div>Account: {metrics.cashBaseline.bankAccountId} | Audit ledger entry: {metrics.cashBaseline.ledgerEntryId}</div>
+                            <div style={{ marginTop: '0.5rem' }}>Historical record corrections change the book balance through the recorded cash delta. This is a book balance, not a live bank balance. Transfer cutoff dates use UTC calendar days.</div>
+                            {Array.isArray(metrics.cashBaseline.pendingExpenses) && metrics.cashBaseline.pendingExpenses.length > 0 && <div style={{ marginTop: '0.5rem' }}>
+                                <strong>Pending expenses included at baseline creation</strong>
+                                {metrics.cashBaseline.pendingExpenses.map((expense, index) => <div key={`${expense.externalId}-${index}`}>{expense.paymentDate ? String(expense.paymentDate).slice(0, 10) : ''} {expense.description} ({formatCurrency(expense.amount)}) | {expense.externalId}</div>)}
+                            </div>}
+                        </section>}
                         <div>Linked DLA ledger postings excluded: {formatCurrency(metrics.excludedDlaLedgerTotal)}</div>
                         {metrics.cashPaymentWarnings.map(warning => <div key={warning.dlaId} role="alert" style={{ color: '#b91c1c', marginTop: '0.5rem' }}>
                             {warning.dlaId}: payment records {formatCurrency(warning.paymentsTotal)}; DLA marked paid {formatCurrency(warning.recordedPaid)}; excess {formatCurrency(warning.excess)}.
