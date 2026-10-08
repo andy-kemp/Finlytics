@@ -123,12 +123,12 @@ test('only explicit null is no baseline; request failures retain error status', 
     assert.match(missing.error, /does not match/);
 });
 
-test('API contract uses existing authenticated GET headers and only JSON null means no baseline', async () => {
+test('API contract uses dedicated settlement authorization and only JSON null means no baseline', async () => {
     const source = readFileSync(new URL('../services/apiService.js', import.meta.url), 'utf8');
     const getter = source.slice(source.indexOf('export async function getCashBaseline'), source.indexOf('export async function createBankAccount'));
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-    const run = new AsyncFunction('getAuthHeaders', 'API_BASE', 'fetch',
-        `${getter.replace('export async function', 'async function')}; return getCashBaseline(7);`);
+    const run = new AsyncFunction('getSettlementHeaders', 'API_BASE', 'fetch', 'msalInstance', 'scope',
+        `${getter.replace('export async function', 'async function').replace('import.meta.env.VITE_SETTLEMENT_API_SCOPE', 'scope')}; return getCashBaseline(7);`);
     const headers = { Authorization: 'Bearer existing-auth-token' };
     const auth = async () => headers;
     for (const payload of [baseline, null]) {
@@ -136,13 +136,13 @@ test('API contract uses existing authenticated GET headers and only JSON null me
             assert.equal(url, '/api/bank/accounts/7/cash-baseline');
             assert.deepEqual(options, { headers });
             return { ok: true, json: async () => payload };
-        });
+        }, { getAllAccounts: () => [{}] }, 'api://test/Settlement.Write');
         assert.equal(result, payload);
     }
     for (const status of [401, 404, 500]) {
-        await assert.rejects(run(auth, '/api', async () => ({ ok: false, status })), new RegExp(`cash baseline \\(${status}\\)`));
+        await assert.rejects(run(auth, '/api', async () => ({ ok: false, status }), { getAllAccounts: () => [{}] }, 'api://test/Settlement.Write'), new RegExp(`cash baseline \\(${status}\\)`));
     }
     await assert.rejects(run(async () => { throw new Error('Auth failed'); }, '/api', async () => {
         assert.fail('Unauthenticated request must not run');
-    }), /Auth failed/);
+    }, { getAllAccounts: () => [{}] }, 'api://test/Settlement.Write'), /Auth failed/);
 });

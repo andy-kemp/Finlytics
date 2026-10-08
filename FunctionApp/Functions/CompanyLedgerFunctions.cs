@@ -76,6 +76,14 @@ namespace FinanceHubFunctions.Functions
                     return badRequest;
                 }
 
+                if (entry.EntryType.Equals("Cash_Baseline", StringComparison.OrdinalIgnoreCase)
+                    || (entry.Notes?.Contains("[CASH-BASELINE:", StringComparison.OrdinalIgnoreCase) ?? false))
+                {
+                    var bad = req.CreateResponse(HttpStatusCode.BadRequest);
+                    await bad.WriteAsJsonAsync(new { error = "Cash baselines are reserved for the bank cash-baseline endpoint" }, HttpStatusCode.BadRequest);
+                    return bad;
+                }
+
                 if (VatSettlementPolicy.HasVatMarker(entry.Notes))
                 {
                     var bad = req.CreateResponse(HttpStatusCode.BadRequest);
@@ -146,6 +154,13 @@ namespace FinanceHubFunctions.Functions
             try
             {
                 var entry = await _companyLedgerRepository.GetByIdAsync(id);
+                if (string.Equals(entry?.EntryType, "Cash_Baseline", StringComparison.OrdinalIgnoreCase)
+                    || (entry?.Notes?.Contains("[CASH-BASELINE:", StringComparison.OrdinalIgnoreCase) ?? false))
+                {
+                    var conflict = req.CreateResponse(HttpStatusCode.Conflict);
+                    await conflict.WriteAsJsonAsync(new { error = "An audited cash baseline cannot be deleted" }, HttpStatusCode.Conflict);
+                    return conflict;
+                }
                 if (VatSettlementPolicy.HasVatMarker(entry?.Notes))
                 {
                     var conflict = req.CreateResponse(HttpStatusCode.Conflict);

@@ -1404,7 +1404,7 @@ export async function getBankAccounts() {
 }
 
 export async function getCashBaseline(accountId) {
-    const headers = await getAuthHeaders();
+    const headers = await getSettlementHeaders(msalInstance, import.meta.env.VITE_SETTLEMENT_API_SCOPE, msalInstance.getAllAccounts()[0]);
     const response = await fetch(`${API_BASE}/bank/accounts/${encodeURIComponent(accountId)}/cash-baseline`, { headers });
     if (!response.ok) throw new Error(`Failed to load cash baseline (${response.status})`);
     return response.json();

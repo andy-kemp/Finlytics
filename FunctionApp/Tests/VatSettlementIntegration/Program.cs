@@ -49,6 +49,29 @@ await using (var db = new FinanceHubDbContext(new DbContextOptionsBuilder<Financ
         .SettleVatReturn(new TestRequest("{}", token), 1);
     Check(invalid.StatusCode == HttpStatusCode.BadRequest && denyConnections.Attempts == 0,
         "Signed invalid request returns 400 without database access");
+    var baselineFunctions = new CashBaselineFunctions(db, auth, NullLogger<CashBaselineFunctions>.Instance);
+    var deniedBaseline = await baselineFunctions.CreateBankCashBaseline(new TestRequest("not JSON", null, forbidBody: true), 1);
+    Check(deniedBaseline.StatusCode == HttpStatusCode.Unauthorized && denyConnections.Attempts == 0,
+        "Cash baseline POST authenticates before JSON and database access");
+    var deniedRead = await baselineFunctions.GetBankCashBaseline(new TestRequest("", null, forbidBody: true), 1);
+    Check(deniedRead.StatusCode == HttpStatusCode.Unauthorized && denyConnections.Attempts == 0,
+        "Cash baseline GET authenticates before database access");
+    foreach (var invalidBody in new[] { "{}", "{\"sourceRecordedCash\":1029.15}", "{\"bookBalance\":1,\"BookBalance\":2}",
+        "{\"bookBalance\":1029.15,\"statementBalance\":996.86,\"asOfDate\":\"2026-10-03\",\"reason\":\"consent\",\"pendingExpenses\":[{\"externalId\":\"x\",\"amount\":32.29,\"paymentDate\":\"2026-10-03\",\"description\":\"x\",\"amount\":32.29}]}" })
+    {
+        var invalidBaseline = await baselineFunctions.CreateBankCashBaseline(new TestRequest(invalidBody, token), 1);
+        Check(invalidBaseline.StatusCode == HttpStatusCode.BadRequest && denyConnections.Attempts == 0,
+            "Invalid baseline payload refused before database access: " + invalidBody);
+    }
+    foreach (var forgedBody in new[] { "{\"entryType\":\"Cash_Baseline\"}",
+        "{\"entryType\":\"DLA_In\",\"notes\":\"[cash-baseline:1] forged\"}" })
+    {
+        var forged = await new CompanyLedgerFunctions(NullLoggerFactory.Instance,
+            new TestCompanyLedgerRepository(db), new DeletionGuardService(db), db)
+            .CreateCompanyLedgerEntry(new TestRequest(forgedBody, null));
+        Check(forged.StatusCode == HttpStatusCode.BadRequest && denyConnections.Attempts == 0,
+            "Generic ledger refuses reserved cash baseline type or forged marker");
+    }
     var generic = await new CompanyLedgerFunctions(NullLoggerFactory.Instance,
         new TestCompanyLedgerRepository(db), new DeletionGuardService(db), db)
         .CreateCompanyLedgerEntry(new TestRequest("{\"entryType\":\"VAT_Paid\",\"notes\":\"[VAT-RETURN:1]\"}", null));
