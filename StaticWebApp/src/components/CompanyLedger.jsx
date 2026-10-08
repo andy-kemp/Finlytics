@@ -11,6 +11,7 @@ import {
     getAuthHeaders
 } from '../services/apiService';
 import { calculateDlaCompliance } from '../services/dlaRules';
+import { isVatReclaimBlocked } from '../utils/vatCalculations';
 
 const CompanyLedger = () => {
     const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_BASE_URL || 'https://financehub-func-kemponline.azurewebsites.net/api';
@@ -237,14 +238,17 @@ const CompanyLedger = () => {
             const expenseNet = periodExpenses
                 .filter(exp => exp.ctTag !== 'NonCT')
                 .reduce((sum, exp) => sum + (exp.amountNet || 0), 0);
-            const expenseVat = periodExpenses.reduce((sum, exp) => sum + (exp.vatAmount || 0), 0);
+            const expenseVat = periodExpenses.filter(exp => !exp.isDLA && !isVatReclaimBlocked(exp))
+                .reduce((sum, exp) => sum + (exp.vatAmount || 0), 0);
+            const directorVat = periodDla.filter(entry => !isVatReclaimBlocked(entry))
+                .reduce((sum, entry) => sum + (entry.vatAmount || 0), 0);
 
             setDashboardMetrics({
                 incomeNet,
                 expenseNet,
                 periodDlaCtNet,
                 tradingProfit: incomeNet - expenseNet - periodDlaCtNet,
-                vatBalance: incomeVat - expenseVat
+                vatBalance: incomeVat - expenseVat - directorVat
             });
         } catch (err) {
             console.error('Error loading company ledger:', err);

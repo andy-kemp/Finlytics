@@ -7,6 +7,7 @@ import TrivialBenefitModal from './TrivialBenefitModal';
 import ConfirmDeleteModal from './ConfirmDeleteModal';
 import ForeignCurrencyFields, { ForeignCurrencySummary } from './ForeignCurrencyFields';
 import { resolveInvoiceCurrency } from '../utils/foreignCurrency.mjs';
+import { isVatReclaimBlocked } from '../utils/vatCalculations';
 import { changeInvoiceCurrency, currencyMetadata, currencyPayload, currencyValidation, scannedCurrencyAmounts, updateCurrencyFields } from '../utils/foreignCurrencyForm.mjs';
 
 const DLA = ({ openNew }) => {
@@ -1656,9 +1657,9 @@ const DLA = ({ openNew }) => {
     // VAT reclaimable: exclude NonCT items (no CT relief = no VAT relief)
     // The gross amount still counts in the DLA total — only VAT reclaim is blocked
     const filterVatReclaimable = filtered
-        .filter(e => e.ctTag !== 'NonCT')
+        .filter(e => e.direction === 'OwedToDirector' && !isVatReclaimBlocked(e))
         .reduce((s, e) => s + (e.vatAmount || 0), 0);
-    const vatExcludedEntries = filtered.filter(e => e.ctTag === 'NonCT' && (e.vatAmount || 0) > 0);
+    const vatExcludedEntries = filtered.filter(e => e.direction === 'OwedToDirector' && isVatReclaimBlocked(e) && (e.vatAmount || 0) > 0);
     const filterTotalGross = filtered.reduce((s, e) => s + (e.amountGross || 0), 0);
     const filterTotalPaid = filtered.reduce((s, e) => s + (e.amountPaid || 0), 0);
     const filterTotalOutstanding = filtered.reduce((s, e) => s + (e.remainingBalance || 0), 0);
@@ -3484,7 +3485,7 @@ const DLA = ({ openNew }) => {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '0.5rem', marginBottom: '1rem', padding: '0.75rem 1rem', background: 'rgba(0,0,0,0.04)', borderRadius: '8px', fontSize: '0.82rem' }}>
                 <div><span style={{ opacity: 0.6, display: 'block', marginBottom: '0.15rem' }}>Gross</span><strong>{formatCurrency(filterTotalGross)}</strong></div>
                 <div><span style={{ opacity: 0.6, display: 'block', marginBottom: '0.15rem' }}>Net</span><strong>{formatCurrency(filterTotalNet)}</strong></div>
-                <div title={filterVatReclaimable !== filterTotalVat ? `Total VAT: ${formatCurrency(filterTotalVat)} — only reclaimable portion shown (NonCT items excluded)` : undefined}>
+                <div title={filterVatReclaimable !== filterTotalVat ? `Total VAT: ${formatCurrency(filterTotalVat)}; eligible UK claims only` : undefined}>
                     <span style={{ opacity: 0.6, display: 'block', marginBottom: '0.15rem' }}>VAT (reclaimable)</span>
                     <strong>{formatCurrency(filterVatReclaimable)}</strong>
                     {filterVatReclaimable !== filterTotalVat && (
@@ -3512,7 +3513,7 @@ const DLA = ({ openNew }) => {
                         ⚠️ {vatExcludedEntries.length} item{vatExcludedEntries.length !== 1 ? 's' : ''} excluded from VAT reclaim — {formatCurrency(vatExcludedEntries.reduce((s, e) => s + (e.vatAmount || 0), 0))} VAT not reclaimable
                     </summary>
                     <div style={{ fontSize: '0.75rem', color: '#5d4037', margin: '0.4rem 0' }}>
-                        These entries have NonCT status — their VAT cannot be reclaimed but the gross amount is included in the DLA total.
+                        VAT excluded by the reclaim rules. Gross costs remain included in the DLA total.
                     </div>
                     <table style={{ width: '100%', fontSize: '0.78rem', borderCollapse: 'collapse', marginTop: '0.3rem' }}>
                         <thead>

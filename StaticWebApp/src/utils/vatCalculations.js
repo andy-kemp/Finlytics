@@ -2,7 +2,9 @@ export const VAT_ADJUSTMENTS_STORAGE_KEY = 'finlytics.vatQuarterAdjustments.v1';
 
 export function isVatReclaimBlocked(item) {
     const category = (item.category || '').toLowerCase();
-    return category.includes('entertainment')
+    const currency = String(item.originalCurrency || 'GBP').trim().toUpperCase();
+    return currency === 'EUR' || currency === 'USD'
+        || category.includes('entertainment')
         || category === 'trivial benefit'
         || item.isTrivialBenefit === true
         || item.ctTag === 'NonCT';
