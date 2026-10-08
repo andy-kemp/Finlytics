@@ -1,6 +1,10 @@
 using System;
+using System.Data;
+using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
+using FinanceHubFunctions.Helpers;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
@@ -16,16 +20,19 @@ namespace FinanceHubFunctions.Functions
         private readonly IVatReturnRepository _vatReturnRepository;
         private readonly DeletionGuardService _guard;
         private readonly BlobStorageService? _blobStorage;
+        private readonly FinanceHubDbContext _db;
 
         public VatReturnFunctions(
             ILogger<VatReturnFunctions> logger,
             IVatReturnRepository vatReturnRepository,
             DeletionGuardService guard,
+            FinanceHubDbContext db,
             BlobStorageService? blobStorage = null)
         {
             _logger = logger;
             _vatReturnRepository = vatReturnRepository;
             _guard = guard;
+            _db = db;
             _blobStorage = blobStorage;
         }
 
@@ -37,8 +44,21 @@ namespace FinanceHubFunctions.Functions
             try
             {
                 var returns = await _vatReturnRepository.GetAllAsync();
+                var settlements = await _db.CompanyLedger.AsNoTracking()
+                    .Where(entry => entry.Notes != null && entry.Notes.Contains("[VAT-RETURN:"))
+                    .Select(entry => new CompanyLedgerEntry
+                    {
+                        Id = entry.Id,
+                        EntryType = entry.EntryType,
+                        Amount = entry.Amount,
+                        EffectiveDate = entry.EffectiveDate,
+                        Notes = entry.Notes
+                    })
+                    .ToListAsync();
+                var byReturn = settlements.ToLookup(entry => VatSettlementPolicy.LinkedReturnId(entry.Notes));
                 var response = req.CreateResponse(HttpStatusCode.OK);
-                await response.WriteAsJsonAsync(returns);
+                await response.WriteAsJsonAsync(returns.Select(record =>
+                    VatSettlementPolicy.Project(record, byReturn[record.Id].SingleOrDefault())), HttpStatusCode.OK);
                 return response;
             }
             catch (Exception ex)
@@ -91,38 +111,49 @@ namespace FinanceHubFunctions.Functions
             _logger.LogInformation("Updating VAT return {Id}", id);
             try
             {
-                var existing = await _vatReturnRepository.GetByIdAsync(id);
-                if (existing == null)
-                {
-                    return req.CreateResponse(HttpStatusCode.NotFound);
-                }
-
-                var updated = await req.ReadFromJsonAsync<VatReturn>();
-                if (updated == null)
+                var body = await req.ReadAsStringAsync();
+                if (!ForeignCurrencyHelper.TryRead<VatReturn>(body, out var updated, out var parseError))
                 {
                     var bad = req.CreateResponse(HttpStatusCode.BadRequest);
-                    await bad.WriteStringAsync("Invalid VAT return data");
+                    await bad.WriteAsJsonAsync(new { error = parseError }, HttpStatusCode.BadRequest);
                     return bad;
                 }
 
-                existing.QuarterLabel = updated.QuarterLabel;
-                existing.MonthsLabel = updated.MonthsLabel;
-                existing.QuarterStartDate = updated.QuarterStartDate;
-                existing.QuarterEndDate = updated.QuarterEndDate;
-                existing.VatIn = updated.VatIn;
-                existing.VatOut = updated.VatOut;
-                existing.VatOwed = updated.VatOwed;
-                existing.FiledDate = updated.FiledDate;
-                existing.Reference = updated.Reference;
-                existing.Notes = updated.Notes;
-                if (!string.IsNullOrEmpty(updated.ConfirmationPdfUrl))
-                    existing.ConfirmationPdfUrl = updated.ConfirmationPdfUrl;
-                existing.ModifiedDate = DateTime.UtcNow;
+                return await _db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+                {
+                    _db.ChangeTracker.Clear();
+                    await using var transaction = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+                    var existing = await _db.VatReturns.SingleOrDefaultAsync(record => record.Id == id);
+                    if (existing == null) return req.CreateResponse(HttpStatusCode.NotFound);
+                    ForeignCurrencyHelper.PreserveOmitted(updated!, existing, body!);
+                    var marker = VatSettlementPolicy.Marker(id);
+                    if (VatSettlementPolicy.ChangesFiledFigures(existing, updated!)
+                        && await _db.CompanyLedger.AnyAsync(entry => entry.Notes != null && entry.Notes.Contains(marker)))
+                    {
+                        var conflict = req.CreateResponse(HttpStatusCode.Conflict);
+                        await conflict.WriteAsJsonAsync(new { error = "Settled VAT return dates and filed VAT figures cannot be changed" }, HttpStatusCode.Conflict);
+                        return conflict;
+                    }
+                    existing.QuarterLabel = updated.QuarterLabel;
+                    existing.MonthsLabel = updated.MonthsLabel;
+                    existing.QuarterStartDate = updated.QuarterStartDate;
+                    existing.QuarterEndDate = updated.QuarterEndDate;
+                    existing.VatIn = updated.VatIn;
+                    existing.VatOut = updated.VatOut;
+                    existing.VatOwed = updated.VatOwed;
+                    existing.FiledDate = updated.FiledDate;
+                    existing.Reference = updated.Reference;
+                    existing.Notes = updated.Notes;
+                    if (!string.IsNullOrEmpty(updated.ConfirmationPdfUrl))
+                        existing.ConfirmationPdfUrl = updated.ConfirmationPdfUrl;
+                    existing.ModifiedDate = DateTime.UtcNow;
 
-                var result = await _vatReturnRepository.UpdateAsync(existing);
-                var response = req.CreateResponse(HttpStatusCode.OK);
-                await response.WriteAsJsonAsync(result);
-                return response;
+                    await _db.SaveChangesAsync();
+                    await transaction.CommitAsync();
+                    var response = req.CreateResponse(HttpStatusCode.OK);
+                    await response.WriteAsJsonAsync(existing, HttpStatusCode.OK);
+                    return response;
+                });
             }
             catch (Exception ex)
             {
@@ -144,14 +175,28 @@ namespace FinanceHubFunctions.Functions
                 var blocked = await _guard.GuardAsync(req, "VAT return");
                 if (blocked != null) return blocked;
 
-                var existing = await _vatReturnRepository.GetByIdAsync(id);
-                if (existing == null)
+                return await _db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
                 {
-                    return req.CreateResponse(HttpStatusCode.NotFound);
-                }
+                    _db.ChangeTracker.Clear();
+                    await using var transaction = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+                    var existing = await _db.VatReturns.SingleOrDefaultAsync(record => record.Id == id);
+                    if (existing == null)
+                    {
+                        return req.CreateResponse(HttpStatusCode.NotFound);
+                    }
 
-                await _vatReturnRepository.DeleteAsync(id);
-                return req.CreateResponse(HttpStatusCode.NoContent);
+                    var marker = VatSettlementPolicy.Marker(id);
+                    if (await _db.CompanyLedger.AnyAsync(entry => entry.Notes != null && entry.Notes.Contains(marker)))
+                    {
+                        var conflict = req.CreateResponse(HttpStatusCode.Conflict);
+                        await conflict.WriteAsJsonAsync(new { error = "A settled VAT return cannot be deleted" }, HttpStatusCode.Conflict);
+                        return conflict;
+                    }
+                    _db.VatReturns.Remove(existing);
+                    await _db.SaveChangesAsync();
+                    await transaction.CommitAsync();
+                    return req.CreateResponse(HttpStatusCode.NoContent);
+                });
             }
             catch (Exception ex)
             {

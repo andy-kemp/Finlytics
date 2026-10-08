@@ -11,6 +11,8 @@ using Microsoft.Extensions.Logging;
 using FinanceHubFunctions.Data;
 using FinanceHubFunctions.Models;
 using FinanceHubFunctions.Services;
+using FinanceHubFunctions.Helpers;
+using Microsoft.EntityFrameworkCore;
 
 namespace FinanceHubFunctions.Functions
 {
@@ -26,9 +28,11 @@ namespace FinanceHubFunctions.Functions
         private readonly IDlaPaymentRepository? _dlaPaymentRepository;
         private readonly IBillRepository? _billRepository;
         private readonly DeletionGuardService? _guard;
+        private readonly FinanceHubDbContext _db;
 
         public ReconciliationFunctions(
             ILogger<ReconciliationFunctions> logger,
+            FinanceHubDbContext db,
             IBankTransactionRepository? bankTransactionRepository = null,
             IReconciliationRuleRepository? ruleRepository = null,
             IReconciliationMatchRepository? matchRepository = null,
@@ -40,6 +44,7 @@ namespace FinanceHubFunctions.Functions
             DeletionGuardService? guard = null)
         {
             _logger = logger;
+            _db = db;
             _bankTransactionRepository = bankTransactionRepository;
             _ruleRepository = ruleRepository;
             _matchRepository = matchRepository;
@@ -66,30 +71,45 @@ namespace FinanceHubFunctions.Functions
             return Math.Abs((left.Value.Date - right.Value.Date).TotalDays) <= days;
         }
 
+        private async Task<bool> IsVatReservedAsync(int bankTransactionId, string? relatedType, string? relatedId)
+        {
+            var bankMarker = VatSettlementPolicy.BankMarker(bankTransactionId);
+            var ledgerId = relatedType == "CompanyLedger" && int.TryParse(relatedId, out var parsedId) ? parsedId : 0;
+            return await _db.CompanyLedger.AnyAsync(entry => entry.Notes != null
+                && (entry.Notes.Contains(bankMarker) || (entry.Id == ledgerId && entry.Notes.Contains("[VAT-RETURN:"))));
+        }
+
         private async Task<bool> CreateMatchAndMarkAsync(int bankTransactionId, string relatedType, string relatedId, string notes)
         {
             if (_matchRepository == null || _bankTransactionRepository == null) return false;
 
-            var created = await _matchRepository.CreateAsync(new ReconciliationMatch
+            return await _db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
             {
-                BankTransactionId = bankTransactionId,
-                RelatedType = relatedType,
-                RelatedId = relatedId,
-                MatchType = "Auto",
-                Notes = notes,
-                CreatedDate = DateTime.UtcNow
+                _db.ChangeTracker.Clear();
+                await using var scope = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+                if (await IsVatReservedAsync(bankTransactionId, relatedType, relatedId)) return false;
+                var created = await _matchRepository.CreateAsync(new ReconciliationMatch
+                {
+                    BankTransactionId = bankTransactionId,
+                    RelatedType = relatedType,
+                    RelatedId = relatedId,
+                    MatchType = "Auto",
+                    Notes = notes,
+                    CreatedDate = DateTime.UtcNow
+                });
+
+                var transaction = await _bankTransactionRepository.GetByIdAsync(bankTransactionId);
+                if (transaction != null)
+                {
+                    transaction.IsReconciled = true;
+                    transaction.ReconciledOn = DateTime.UtcNow;
+                    transaction.ReconciledBy = "Auto";
+                    await _bankTransactionRepository.UpdateAsync(transaction);
+                }
+
+                await scope.CommitAsync();
+                return created != null;
             });
-
-            var transaction = await _bankTransactionRepository.GetByIdAsync(bankTransactionId);
-            if (transaction != null)
-            {
-                transaction.IsReconciled = true;
-                transaction.ReconciledOn = DateTime.UtcNow;
-                transaction.ReconciledBy = "Auto";
-                await _bankTransactionRepository.UpdateAsync(transaction);
-            }
-
-            return created != null;
         }
 
         private static decimal? AbsAmount(decimal? value)
@@ -449,20 +469,34 @@ namespace FinanceHubFunctions.Functions
                 return bad;
             }
 
-            match.CreatedDate = DateTime.UtcNow;
-            var created = await _matchRepository.CreateAsync(match);
-
-            var transaction = await _bankTransactionRepository.GetByIdAsync(match.BankTransactionId);
-            if (transaction != null)
+            return await _db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
             {
-                transaction.IsReconciled = true;
-                transaction.ReconciledOn = DateTime.UtcNow;
-                await _bankTransactionRepository.UpdateAsync(transaction);
-            }
+                _db.ChangeTracker.Clear();
+                match.Id = 0;
+                await using var scope = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+                if (VatSettlementPolicy.HasVatMarker(match.Notes)
+                    || await IsVatReservedAsync(match.BankTransactionId, match.RelatedType, match.RelatedId))
+                {
+                    var conflict = req.CreateResponse(HttpStatusCode.Conflict);
+                    await conflict.WriteAsJsonAsync(new { error = "VAT settlement bank transactions and ledger entries cannot be rematched" }, HttpStatusCode.Conflict);
+                    return conflict;
+                }
+                match.CreatedDate = DateTime.UtcNow;
+                var created = await _matchRepository.CreateAsync(match);
 
-            var ok = req.CreateResponse(HttpStatusCode.OK);
-            await ok.WriteAsJsonAsync(created);
-            return ok;
+                var transaction = await _bankTransactionRepository.GetByIdAsync(match.BankTransactionId);
+                if (transaction != null)
+                {
+                    transaction.IsReconciled = true;
+                    transaction.ReconciledOn = DateTime.UtcNow;
+                    await _bankTransactionRepository.UpdateAsync(transaction);
+                }
+
+                var ok = req.CreateResponse(HttpStatusCode.OK);
+                await ok.WriteAsJsonAsync(created);
+                await scope.CommitAsync();
+                return ok;
+            });
         }
 
         [Function("AutoReconcileTransactions")]

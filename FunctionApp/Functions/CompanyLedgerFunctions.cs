@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -8,8 +9,10 @@ using System.Threading.Tasks;
 using FinanceHubFunctions.Models;
 using FinanceHubFunctions.Services;
 using FinanceHubFunctions.Data;
+using FinanceHubFunctions.Helpers;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace FinanceHubFunctions.Functions
@@ -19,12 +22,14 @@ namespace FinanceHubFunctions.Functions
         private readonly ILogger _logger;
         private readonly ICompanyLedgerRepository _companyLedgerRepository;
         private readonly DeletionGuardService _guard;
+        private readonly FinanceHubDbContext _db;
 
-        public CompanyLedgerFunctions(ILoggerFactory loggerFactory, ICompanyLedgerRepository companyLedgerRepository, DeletionGuardService guard)
+        public CompanyLedgerFunctions(ILoggerFactory loggerFactory, ICompanyLedgerRepository companyLedgerRepository, DeletionGuardService guard, FinanceHubDbContext db)
         {
             _logger = loggerFactory.CreateLogger<CompanyLedgerFunctions>();
             _companyLedgerRepository = companyLedgerRepository;
             _guard = guard;
+            _db = db;
         }
 
         [Function("GetCompanyLedger")]
@@ -71,6 +76,13 @@ namespace FinanceHubFunctions.Functions
                     return badRequest;
                 }
 
+                if (VatSettlementPolicy.HasVatMarker(entry.Notes))
+                {
+                    var bad = req.CreateResponse(HttpStatusCode.BadRequest);
+                    await bad.WriteAsJsonAsync(new { error = "VAT settlement markers are reserved for the VAT settlement endpoint" }, HttpStatusCode.BadRequest);
+                    return bad;
+                }
+
                 // Validate entry type
                 var validTypes = new[] { "Salary", "EmployeeNI", "EmployerNI", "PAYE", "DLA_In", "DLA_Out", 
                                         "CorpTax_Reserve", "CorpTax_Paid", "Dividend_Declared", "Dividend_Paid",
@@ -80,6 +92,31 @@ namespace FinanceHubFunctions.Functions
                     var badRequest = req.CreateResponse(HttpStatusCode.BadRequest);
                     await badRequest.WriteStringAsync($"Invalid EntryType. Must be one of: {string.Join(", ", validTypes)}");
                     return badRequest;
+                }
+
+                if (entry.EntryType == "VAT_Paid" || entry.EntryType == "VAT_Reclaim")
+                {
+                    var originalId = entry.Id;
+                    return await _db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+                    {
+                        _db.ChangeTracker.Clear();
+                        entry.Id = originalId;
+                        await using var transaction = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+                        var start = entry.EffectiveDate.Date;
+                        var end = start.AddDays(1);
+                        if (await _db.CompanyLedger.AnyAsync(existing => existing.EntryType == entry.EntryType
+                            && existing.Amount == entry.Amount && existing.EffectiveDate >= start && existing.EffectiveDate < end))
+                        {
+                            var conflict = req.CreateResponse(HttpStatusCode.Conflict);
+                            await conflict.WriteAsJsonAsync(new { error = "A VAT cash entry with the same type, amount and date already exists; review required" }, HttpStatusCode.Conflict);
+                            return conflict;
+                        }
+                        var created = await _companyLedgerRepository.CreateAsync(entry);
+                        await transaction.CommitAsync();
+                        var success = req.CreateResponse(HttpStatusCode.OK);
+                        await success.WriteAsJsonAsync(created);
+                        return success;
+                    });
                 }
 
                 var createdEntry = await _companyLedgerRepository.CreateAsync(entry);
@@ -108,6 +145,13 @@ namespace FinanceHubFunctions.Functions
 
             try
             {
+                var entry = await _companyLedgerRepository.GetByIdAsync(id);
+                if (VatSettlementPolicy.HasVatMarker(entry?.Notes))
+                {
+                    var conflict = req.CreateResponse(HttpStatusCode.Conflict);
+                    await conflict.WriteAsJsonAsync(new { error = "A VAT settlement ledger entry cannot be deleted" }, HttpStatusCode.Conflict);
+                    return conflict;
+                }
                 await _companyLedgerRepository.DeleteAsync(id);
                 var response = req.CreateResponse(HttpStatusCode.OK);
                 await response.WriteAsJsonAsync(new { success = true, message = "Entry deleted successfully" });

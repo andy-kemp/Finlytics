@@ -74,6 +74,13 @@ namespace FinanceHubFunctions.Functions
                         var account = bank == null ? null : await _db.BankAccounts.SingleOrDefaultAsync(record => record.Id == bank.BankAccountId);
                         validationError = GbpSettlementPolicy.ValidateBank(expense, request, bank, account);
                         if (validationError != null) return await Error(HttpStatusCode.BadRequest, validationError);
+                        var matches = await _db.ReconciliationMatches.Where(match => match.BankTransactionId == bankId).ToListAsync();
+                        var isRetry = expense.ActualGbpPaid.HasValue && !GbpSettlementPolicy.Conflicts(expense, request);
+                        var bankMarker = VatSettlementPolicy.BankMarker(bankId);
+                        if (matches.Any(match => match.RelatedType != "Expense" || match.RelatedId != id.ToString())
+                            || (bank!.IsReconciled && !isRetry)
+                            || await _db.CompanyLedger.AnyAsync(entry => entry.Notes != null && entry.Notes.Contains(bankMarker)))
+                            return await Error(HttpStatusCode.Conflict, "Bank transaction is reconciled or linked to another settlement");
                         if (await _db.Expenses.AnyAsync(record => record.Id != id && record.SettlementBankTransactionId == bankId)
                             || await _db.DlaEntries.AnyAsync(record => record.SettlementBankTransactionId == bankId))
                             return await Error(HttpStatusCode.Conflict, "Bank transaction is already linked to another expense or DLA entry");

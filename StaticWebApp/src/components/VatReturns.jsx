@@ -1,4 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import VatSettlementModal, { SettlementSummary } from './VatSettlementModal';
+import { isVatSettled, overlappingVatReturns, settlementAction } from '../utils/vatSettlement.mjs';
 import {
     getVatReturns,
     createVatReturn,
@@ -51,6 +53,14 @@ export default function VatReturns() {
     const [dlaEntries, setDlaEntries]     = useState([]);
     const [settings, setSettings]         = useState(null);
     const [toast, setToast]               = useState(null);
+    const [settlementReturn, setSettlementReturn] = useState(null);
+
+    const settlementSaved = async () => {
+        const records = await getVatReturns();
+        setFiledReturns(records);
+        setSettlementReturn(null);
+        showToast('VAT settlement recorded');
+    };
 
     // File modal state
     const [showFileModal, setShowFileModal] = useState(false);
@@ -562,7 +572,8 @@ export default function VatReturns() {
                 vatIn:            editingReturn.vatIn,
                 vatOut:           editingReturn.vatOut,
                 vatOwed:          editingReturn.vatOwed,
-                filedDate:        editDate ? new Date(editDate).toISOString() : editingReturn.filedDate,
+                filedDate:        !editDate || editDate === editingReturn.filedDate?.slice(0, 10)
+                    ? editingReturn.filedDate : new Date(editDate).toISOString(),
                 reference:        editRef,
                 notes:            editNotes
             });
@@ -577,6 +588,10 @@ export default function VatReturns() {
     };
 
     const handleUnfile = async (fr) => {
+        if (isVatSettled(fr)) {
+            showToast('A settled VAT return cannot be unfiled.', 'error');
+            return;
+        }
         if (!window.confirm(`Unfile ${fr.quarterLabel}? This will remove the filed record.`)) return;
         try {
             await deleteVatReturn(fr.id);
@@ -632,6 +647,10 @@ export default function VatReturns() {
     };
 
     const openHmrcModal = (q) => {
+        if (filedReturns.some(fr => isVatSettled(fr) && overlappingVatReturns(q, [fr]).length)) {
+            showToast('A settled VAT return cannot be resubmitted or replaced.', 'error');
+            return;
+        }
         const calc = calcForQuarter(q);
         setHmrcQuarter(q);
         setHmrcCalc(calc);
@@ -647,12 +666,20 @@ export default function VatReturns() {
     };
 
     const submitToHmrc = async () => {
+        if (hmrcQuarter && filedReturns.some(fr => isVatSettled(fr) && overlappingVatReturns(hmrcQuarter, [fr]).length)) {
+            showToast('A settled VAT return cannot be resubmitted or replaced.', 'error');
+            return;
+        }
         if (!hmrcQuarter || !hmrcCalc || !hmrcPeriodKey.trim()) {
             showToast('Please enter the HMRC period key', 'error');
             return;
         }
         setHmrcSubmitting(true);
         try {
+            const latestFiled = await getVatReturns();
+            if (latestFiled.some(fr => isVatSettled(fr) && overlappingVatReturns(hmrcQuarter, [fr]).length)) {
+                throw new Error('A settled VAT return cannot be resubmitted or replaced.');
+            }
             const vatDueSales            = Math.round(hmrcCalc.vatIn * 100) / 100;
             const vatDueAcquisitions     = 0;
             const totalVatDue            = Math.round((vatDueSales + vatDueAcquisitions) * 100) / 100;
@@ -717,7 +744,7 @@ export default function VatReturns() {
 
             // Remove any existing filed record for this quarter before saving the new
             // snapshot — prevents duplicate records if the user resubmits.
-            const existingFiled = getFiledForQuarter(hmrcQuarter);
+            const existingFiled = findFiledForQuarter(hmrcQuarter, latestFiled);
             if (existingFiled?.id) {
                 try { await deleteVatReturn(existingFiled.id); } catch (_) { /* best-effort */ }
             }
@@ -1181,6 +1208,7 @@ export default function VatReturns() {
                                         </td>
                                         <td style={{ fontSize: '0.88rem', color: '#6c757d' }}>
                                             {filed ? fmtDate(filed.filedDate) : '—'}
+                                            {filed && <SettlementSummary record={filed} />}
                                         </td>
                                         <td style={{ fontSize: '0.88rem', color: '#6c757d' }}>
                                             {filed?.reference || '—'}
@@ -1197,6 +1225,7 @@ export default function VatReturns() {
                                                 const verifyKey = verifyPeriodKey ? `${q.quarterLabel}-${verifyPeriodKey}` : null;
                                                 return (
                                                     <div style={{ display: 'flex', gap: 4, justifyContent: 'center', flexWrap: 'wrap', alignItems: 'center' }}>
+                                                        {settlementAction(filed) && <button className="btn-primary" style={{ fontSize: '0.82rem', padding: '4px 10px' }} onClick={() => setSettlementReturn(filed)}>{settlementAction(filed)}</button>}
                                                         <button
                                                             onClick={() => exportVatCsv(q)}
                                                             className="btn-icon"
@@ -1211,6 +1240,7 @@ export default function VatReturns() {
                                                         <button
                                                             onClick={() => handleUnfile(filed)}
                                                             className="btn-icon btn-danger"
+                                                            disabled={isVatSettled(filed)}
                                                             title="Unfile this quarter"
                                                         >↩️</button>
                                                         {filed.confirmationPdfUrl ? (
@@ -1325,6 +1355,29 @@ export default function VatReturns() {
                     </table>
                 </div>
             </div>
+
+            {filedReturns.length > 0 && <section style={{ marginBottom: 24 }}>
+                <h2 style={{ fontSize: '1.15rem' }}>All Filed Returns</h2>
+                <div style={{ overflowX: 'auto' }}>
+                    <table className="data-table" style={{ width: '100%' }}>
+                        <thead><tr><th>Return</th><th>Period</th><th>Filed</th><th>Net Owed</th><th>Settlement</th><th>Actions</th></tr></thead>
+                        <tbody>{[...filedReturns].sort((first, second) => new Date(second.filedDate) - new Date(first.filedDate)).map(fr => <tr key={fr.id}>
+                            <td><strong>{fr.quarterLabel}</strong><div>#{fr.id} | Filed</div></td>
+                            <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(fr.quarterStartDate)} to {fmtDate(fr.quarterEndDate)}</td>
+                            <td>{fmtDate(fr.filedDate)}<div>{fr.reference}</div></td>
+                            <td style={{ whiteSpace: 'nowrap' }}>{fmt(fr.vatOwed)}</td>
+                            <td><SettlementSummary record={fr} /></td>
+                            <td><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                {settlementAction(fr) && <button className="btn-primary" onClick={() => setSettlementReturn(fr)}>{settlementAction(fr)}</button>}
+                                <button className="btn-icon" title="Edit filing details" onClick={() => openEditModal(fr)}>✏️</button>
+                                <button className="btn-icon btn-danger" title="Unfile return" disabled={isVatSettled(fr)} onClick={() => handleUnfile(fr)}>↩️</button>
+                            </div></td>
+                        </tr>)}</tbody>
+                    </table>
+                </div>
+            </section>}
+
+            {settlementReturn && <VatSettlementModal key={settlementReturn.id} record={settlementReturn} overlaps={overlappingVatReturns(settlementReturn, filedReturns)} onClose={() => setSettlementReturn(null)} onSuccess={settlementSaved} />}
 
             {/* How it works info */}
             <div style={{
@@ -1453,7 +1506,7 @@ export default function VatReturns() {
                                         </div>
                                         {figuresMismatch && (
                                             <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderTopLeftRadius: 0, borderTopRightRadius: 0, borderRadius: '0 0 6px 6px', padding: '8px 14px', marginBottom: 16, fontSize: '0.83rem', color: '#856404' }}>
-                                                ⚠️ <strong>These figures were submitted before your DLA pre-registration entries were included.</strong> The current VAT Out is {fmtBox(calcVatOut)} but only {fmtBox(filedVatOut)} was filed. You should <strong>↩️ Unfile</strong> this return and resubmit to HMRC with the correct figures.
+                                                ⚠️ <strong>The filed figures differ from the current calculation.</strong> The current VAT Out is {fmtBox(calcVatOut)} but {fmtBox(filedVatOut)} was filed. {isVatSettled(verifyModal.filed) ? 'This settled return cannot be unfiled or replaced. Review corrections separately.' : 'Review the return before making any correction.'}
                                             </div>
                                         )}
                                         <div style={{ border: '1px solid #dee2e6', borderRadius: 6, overflow: 'hidden' }}>

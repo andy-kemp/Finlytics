@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Helpers/VatSettlementPolicy.cs" Link="VatSettlementPolicy.cs" />
+    <Compile Include="../../Models/VatReturn.cs" Link="VatReturn.cs" />
+    <Compile Include="../../Models/CompanyLedgerEntry.cs" Link="CompanyLedgerEntry.cs" />
+    <Compile Include="../../Models/BankTransaction.cs" Link="BankTransaction.cs" />
+    <Compile Include="../../Models/BankAccount.cs" Link="BankAccount.cs" />
+  </ItemGroup>
+</Project>

@@ -1924,6 +1924,26 @@ export async function deleteSubscription(id) {
 
 // ── VAT Returns ──────────────────────────────────────────────────────────────
 
+export async function confirmVatSettlement(id, settlement) {
+    const headers = await getSettlementHeaders(msalInstance, import.meta.env.VITE_SETTLEMENT_API_SCOPE, msalInstance.getAllAccounts()[0]);
+    const response = await fetch(`${API_BASE}/vat-returns/${id}/settlement`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+            amount: settlement.amount,
+            settlementDate: settlement.settlementDate,
+            bankTransactionId: settlement.bankTransactionId ?? null,
+            reference: settlement.reference || '',
+            differenceReason: settlement.differenceReason || ''
+        })
+    });
+    if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || 'VAT settlement could not be confirmed');
+    }
+    return response.json();
+}
+
 export async function getVatReturns() {
     const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE}/vat-returns`, { headers });

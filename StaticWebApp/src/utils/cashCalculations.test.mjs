@@ -8,6 +8,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { calculateRecordedTradingCash } from './cashCalculations.mjs';
 
+test('VAT settlement cash uses actual amounts once and stays in the settlement period', () => {
+    const ledgerEntries = [
+        { id: 1, entryType: 'VAT_Reclaim', amount: 581.33, effectiveDate: '2026-07-31', notes: '[VAT-RETURN:9]' },
+        { id: 2, entryType: 'VAT_Paid', amount: 3841.11, effectiveDate: '2026-09-02', notes: '[VAT-RETURN:11]' }
+    ];
+    const result = calculateRecordedTradingCash({ ledgerEntries });
+    assert.equal(result.cashIn, 581.33);
+    assert.equal(result.cashOut, 3841.11);
+    assert.equal(result.balance, -3259.78);
+    assert.equal(calculateRecordedTradingCash({ ledgerEntries, startDate: new Date('2026-10-01'), endDate: new Date('2026-10-08') }).balance, 0);
+});
+
 test('cash balance carries earlier paid receipts forward instead of using quarter income', () => {
     const result = calculateRecordedTradingCash({
         invoices: [
