@@ -43,3 +43,11 @@ test('DLA repayment receipts follow loan direction and linked ledger entries are
     assert.equal(result.comparisons[0].candidates.length, 1);
     assert.equal(result.comparisons[0].candidates[0].key, 'DLA-Payment:2');
 });
+
+test('startup liability ledger entries never become suggested bank-payment matches', () => {
+    const result = compareBankToApp([{ ...receipt, direction: 'Out' }], {
+        ledgerEntries: [{ id: 1, entryType: 'DLA_Out', title: 'DLA Startup: personal costs', amount: 1200, effectiveDate: '2026-10-01' }]
+    });
+    assert.equal(result.comparisons[0].status, 'Missing app payment');
+    assert.equal(result.unmatchedPayments.length, 0);
+});

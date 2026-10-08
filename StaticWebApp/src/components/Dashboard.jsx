@@ -357,6 +357,10 @@ export default function Dashboard({ onNavigate }) {
                 totalCompanyCashEstimate,
                 recordedCashIn: recordedCash.cashIn,
                 recordedCashOut: recordedCash.cashOut,
+                recordedCashBreakdown: recordedCash.breakdown,
+                cashPaymentWarnings: recordedCash.paymentWarnings,
+                excludedDlaLedgerTotal: recordedCash.excludedDlaLedgerTotal,
+                unlinkedDlaLedger: recordedCash.unlinkedDlaLedger,
                 unpaidInvoices: invoices.filter(inv => inv.status !== 'Paid' && inv.status !== 'Draft').length,
                 unpaidAmount: invoices.filter(inv => inv.status !== 'Paid' && inv.status !== 'Draft')
                     .reduce((sum, inv) => sum + (inv.amountGross || 0), 0),
@@ -815,6 +819,7 @@ export default function Dashboard({ onNavigate }) {
                             {formatCurrency(metrics.totalCompanyCashEstimate)}
                         </div>
                         <div className="metric-detail">All-time in: {formatCurrency(metrics.recordedCashIn)} | Out: {formatCurrency(metrics.recordedCashOut)}</div>
+                        {metrics.cashPaymentWarnings.length > 0 && <div className="metric-detail" style={{ color: '#b91c1c' }}>{metrics.cashPaymentWarnings.length} DLA payment discrepancies</div>}
                     </div>
                 </div>
 
@@ -847,6 +852,34 @@ export default function Dashboard({ onNavigate }) {
                     </div>
                 </div>
             </div>
+
+            <details style={{ margin: '0 0 1rem', padding: '0.75rem 0', borderTop: '1px solid #cbd5e1' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Recorded Cash Breakdown{metrics.cashPaymentWarnings.length > 0 ? ' - reconciliation required' : ''}</summary>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem', marginTop: '0.75rem' }}>
+                    <dl style={{ margin: 0 }}>
+                        {[
+                            ['Paid invoice receipts', metrics.recordedCashBreakdown.invoiceReceipts],
+                            ['Director repayments received', metrics.recordedCashBreakdown.directorReceipts],
+                            ['Other ledger receipts', metrics.recordedCashBreakdown.ledgerCashIn],
+                            ['Company-paid expenses', -metrics.recordedCashBreakdown.expensePayments],
+                            ['DLA repayments paid', -metrics.recordedCashBreakdown.directorRepayments],
+                            ['Loans to directors', -metrics.recordedCashBreakdown.directorLoans],
+                            ['Other ledger payments', -metrics.recordedCashBreakdown.ledgerCashOut],
+                            ['Recorded balance', metrics.totalCompanyCashEstimate]
+                        ].map(([label, amount]) => <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', padding: '0.25rem 0' }}><dt>{label}</dt><dd style={{ margin: 0, whiteSpace: 'nowrap' }}>{formatCurrency(amount)}</dd></div>)}
+                    </dl>
+                    <div>
+                        <div>Linked DLA ledger postings excluded: {formatCurrency(metrics.excludedDlaLedgerTotal)}</div>
+                        {metrics.cashPaymentWarnings.map(warning => <div key={warning.dlaId} role="alert" style={{ color: '#b91c1c', marginTop: '0.5rem' }}>
+                            {warning.dlaId}: payment records {formatCurrency(warning.paymentsTotal)}; DLA marked paid {formatCurrency(warning.recordedPaid)}; excess {formatCurrency(warning.excess)}.
+                        </div>)}
+                        {metrics.unlinkedDlaLedger.length > 0 && <div style={{ marginTop: '0.5rem' }}>
+                            <strong>Unlinked DLA ledger cash</strong>
+                            {metrics.unlinkedDlaLedger.map(entry => <div key={entry.id} style={{ overflowWrap: 'anywhere' }}>#{entry.id}: {entry.title} ({formatCurrency(entry.amount)})</div>)}
+                        </div>}
+                    </div>
+                </div>
+            </details>
 
             {/* Upcoming Deadlines */}
             {deadlines.length > 0 && (

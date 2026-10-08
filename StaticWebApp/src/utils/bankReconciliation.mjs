@@ -1,3 +1,5 @@
+import { isRepresentedDlaLedgerEntry } from './dlaLedgerCash.mjs';
+
 const pennies = value => Math.round(Number(value || 0) * 100);
 const normalized = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -20,7 +22,7 @@ export function compareBankToApp(transactions, { invoices = [], expenses = [], d
     const ledgerOut = new Set(['Dividend_Paid', 'CorpTax_Paid', 'VAT_Paid', 'Salary', 'PAYE', 'DLA_Out', 'DLA_Payment']);
     const ledgerIn = new Set(['VAT_Reclaim', 'DLA_In']);
     ledgerEntries.forEach(entry => {
-        if (entry.entryType.startsWith('DLA_') && loans.has(entry.dlaReference)) return;
+        if (isRepresentedDlaLedgerEntry(entry, dlaEntries)) return;
         if (!ledgerOut.has(entry.entryType) && !ledgerIn.has(entry.entryType)) return;
         add('CompanyLedger', entry.id, entry.amount, ledgerIn.has(entry.entryType) ? 'In' : 'Out', entry.effectiveDate,
             entry.dlaReference, `${entry.entryType}: ${entry.title || entry.id}`);

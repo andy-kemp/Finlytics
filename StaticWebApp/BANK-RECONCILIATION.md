@@ -32,10 +32,19 @@ The net pot movement does not establish total pot balances unless opening pot ba
 were zero and the export includes all pot movements. Main-account cash must be reconciled
 separately from total company cash and estimated tax reserves.
 
-App records have not yet been compared against production: the available browser session
-was signed out. In particular, check small non-invoice receipts, merchant refunds, VAT
-refunds/payments, dividend payment dates, and unreferred director transfers rather than
-forcing every credit into invoice income or every director transfer into DLA.
+Production API records were checked read-only on 8 October 2026 after the initial
+deployment. Legacy DLA liability postings used `DLA ID: ...` in notes instead of the
+structured reference. Counting these alongside actual repayments overstated outflows
+by GBP 22,112.06. The corrected calculation excludes linked postings and exposes its
+cash breakdown, excess DLA payment warnings and remaining unlinked DLA ledger cash.
+
+The corrected all-time recorded balance is GBP -669.19, not a reconciled bank balance.
+Four historical payment records exceed their linked claims' recorded paid amounts by
+GBP 7,800.00. One GBP 89.97 DLA ledger entry references an expense no longer present.
+No VAT payment/refund ledger entries exist, despite statement transactions of GBP
+3,841.11 paid and GBP 581.33 received. These records have not been changed or discarded.
+Check small non-invoice receipts, merchant refunds, dividend dates and director transfers
+as well as these differences. Main-account and all-time company totals are distinct.
 
 ## Validation
 

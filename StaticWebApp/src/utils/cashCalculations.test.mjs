@@ -86,3 +86,61 @@ test('future payments do not affect current cash', () => {
         endDate: new Date('2026-10-08')
     }).balance, 0);
 });
+
+test('director-funded startup liabilities without DlaReference are not bank outflows', () => {
+    const result = calculateRecordedTradingCash({
+        dlaEntries: [{ dlaId: 'DLA-2026-0001', direction: 'OwedToDirector', entryDate: '2026-03-01', amountGross: 25000 }],
+        ledgerEntries: [{ entryType: 'DLA_Out', title: 'DLA Startup: director-funded costs', notes: 'DLA ID: DLA-2026-0001. CT Tag: Revenue', amount: 25000, effectiveDate: '2026-03-01' }]
+    });
+    assert.equal(result.cashOut, 0);
+    assert.equal(result.balance, 0);
+});
+
+test('legacy linked ledger notes do not count a recorded DLA repayment twice', () => {
+    const result = calculateRecordedTradingCash({
+        dlaEntries: [{ dlaId: 'DLA-2026-0001', direction: 'OwedToDirector', entryDate: '2026-03-01', amountGross: 100 }],
+        dlaPayments: [{ dlaId: 'DLA-2026-0001', paymentDate: '2026-04-01', amount: 100 }],
+        ledgerEntries: [{ entryType: 'DLA_Payment', notes: 'Payment for DLA DLA-2026-0001. Remaining balance: 0', amount: 100, effectiveDate: '2026-04-01' }]
+    });
+    assert.equal(result.cashOut, 100);
+});
+
+test('explicit DLA references are case-insensitive and unlinked manual cash remains included', () => {
+    const result = calculateRecordedTradingCash({
+        dlaEntries: [{ dlaId: 'DLA-2026-0001', direction: 'OwedToDirector', amountGross: 100 }],
+        ledgerEntries: [
+            { entryType: 'DLA_Out', dlaReference: ' dla-2026-0001 ', amount: 100, effectiveDate: '2026-04-01' },
+            { entryType: 'DLA_In', amount: 50, effectiveDate: '2026-04-01' }
+        ]
+    });
+    assert.equal(result.cashOut, 0);
+    assert.equal(result.cashIn, 50);
+});
+
+test('excess payment records are flagged rather than silently dropped from cash', () => {
+    const result = calculateRecordedTradingCash({
+        dlaEntries: [{ dlaId: 'DLA-2026-0001', direction: 'OwedToDirector', amountGross: 106.8, amountPaid: 106.8 }],
+        dlaPayments: [
+            { id: 1, dlaId: 'DLA-2026-0001', amount: 4000, paymentDate: '2026-02-10' },
+            { id: 2, dlaId: 'DLA-2026-0001', amount: 3000, paymentDate: '2026-02-10' },
+            { id: 3, dlaId: 'DLA-2026-0001', amount: 106.8, paymentDate: '2026-04-21' }
+        ]
+    });
+    assert.equal(result.paymentWarnings[0].excess, 7000);
+    assert.equal(result.cashOut, 7106.8);
+    assert.deepEqual(result.paymentWarnings[0].paymentIds, [1, 2, 3]);
+});
+
+test('legacy DLA ID liability notes are excluded and remaining manual DLA cash is auditable', () => {
+    const result = calculateRecordedTradingCash({
+        dlaEntries: [{ dlaId: 'DLA-2023-0006', direction: 'OwedToDirector', amountGross: 44 }],
+        ledgerEntries: [
+            { id: 1, entryType: 'DLA_Out', title: 'DLA: personal purchase', notes: 'DLA ID: DLA-2023-0006. Invoice', amount: 44, effectiveDate: '2023-01-04' },
+            { id: 2, entryType: 'DLA_Out', title: 'Manual cash', amount: 89.97, effectiveDate: '2025-05-14' }
+        ]
+    });
+    assert.equal(result.excludedDlaLedgerTotal, 44);
+    assert.equal(result.unlinkedDlaLedger.length, 1);
+    assert.equal(result.breakdown.ledgerCashOut, 89.97);
+    assert.equal(result.balance, -89.97);
+});
