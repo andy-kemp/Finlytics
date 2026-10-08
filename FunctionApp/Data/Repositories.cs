@@ -581,7 +581,7 @@ namespace FinanceHubFunctions.Data
         public async Task<IEnumerable<CompanyLedgerEntry>> GetByPeriodAsync(string periodKey)
         {
             return await _context.CompanyLedger
-                .Where(e => e.PeriodKey == periodKey)
+                .Where(e => periodKey == "all" || e.PeriodKey == periodKey)
                 .OrderBy(e => e.EffectiveDate)
                 .ToListAsync();
         }
@@ -1072,9 +1072,43 @@ namespace FinanceHubFunctions.Data
 
         public async Task<IEnumerable<BankTransaction>> CreateManyAsync(IEnumerable<BankTransaction> transactions)
         {
-            _context.BankTransactions.AddRange(transactions);
+            var incoming = transactions.ToList();
+            var accountIds = incoming.Select(transaction => transaction.BankAccountId).Distinct().ToList();
+            var existing = await _context.BankTransactions
+                .Where(transaction => accountIds.Contains(transaction.BankAccountId))
+                .ToListAsync();
+            var knownIds = new HashSet<string>(StringComparer.Ordinal);
+            var knownRows = new HashSet<string>(StringComparer.Ordinal);
+            var unidentifiedRows = new HashSet<string>(StringComparer.Ordinal);
+            static string RowKey(BankTransaction transaction) =>
+                System.Text.Json.JsonSerializer.Serialize(new object?[] {
+                    transaction.BankAccountId, transaction.TransactionDate, transaction.Amount,
+                    transaction.Direction?.Trim().ToUpperInvariant(), transaction.Reference?.Trim(), transaction.Description?.Trim()
+                });
+            static IEnumerable<string> IdKeys(BankTransaction transaction) =>
+                new[] { transaction.ExternalId, transaction.MonzoTransactionId, transaction.TrueLayerTransactionId }
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Select(id => $"{transaction.BankAccountId}:{id}");
+            foreach (var transaction in existing)
+            {
+                foreach (var id in IdKeys(transaction)) knownIds.Add(id);
+                knownRows.Add(RowKey(transaction));
+                if (!IdKeys(transaction).Any()) unidentifiedRows.Add(RowKey(transaction));
+            }
+            var created = new List<BankTransaction>();
+            foreach (var transaction in incoming)
+            {
+                var ids = IdKeys(transaction).ToList();
+                var row = RowKey(transaction);
+                if (ids.Any(knownIds.Contains) || (ids.Count == 0 ? knownRows.Contains(row) : unidentifiedRows.Contains(row))) continue;
+                created.Add(transaction);
+                foreach (var id in ids) knownIds.Add(id);
+                knownRows.Add(row);
+                if (ids.Count == 0) unidentifiedRows.Add(row);
+            }
+            _context.BankTransactions.AddRange(created);
             await _context.SaveChangesAsync();
-            return transactions;
+            return created;
         }
 
         public async Task<BankTransaction> UpdateAsync(BankTransaction transaction)

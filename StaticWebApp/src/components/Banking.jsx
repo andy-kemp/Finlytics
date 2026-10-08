@@ -1,4 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
+import BankImportPreview from './BankImportPreview';
+import { parseBankCsv, previewBankImport } from '../utils/bankCsv.mjs';
+import { compareBankToApp } from '../utils/bankReconciliation.mjs';
+import { getInvoices, getExpenses, getDlaEntries, getAllDlaPayments, getCompanyLedger } from '../services/apiService';
 import { getBankAccounts, createBankAccount, updateBankAccount, deleteBankAccount, getBankTransactionsByAccount, createBankTransaction, importBankTransactions, getTrueLayerStatus, getTrueLayerAuthUrl, syncTrueLayerTransactions, disconnectTrueLayer, getGoCardlessInstitutions, connectBankGoCardless, syncGoCardlessTransactions, getGoCardlessBankStatus } from '../services/apiService';
 
 const defaultAccount = {
@@ -21,195 +25,6 @@ const defaultTransaction = {
     direction: 'Out'
 };
 
-function parseCsvLine(line) {
-    const values = [];
-    let current = '';
-    let inQuotes = false;
-
-    for (let index = 0; index < line.length; index += 1) {
-        const char = line[index];
-        const next = line[index + 1];
-
-        if (char === '"') {
-            if (inQuotes && next === '"') {
-                current += '"';
-                index += 1;
-            } else {
-                inQuotes = !inQuotes;
-            }
-        } else if (char === ',' && !inQuotes) {
-            values.push(current.trim());
-            current = '';
-        } else {
-            current += char;
-        }
-    }
-
-    values.push(current.trim());
-    return values;
-}
-
-function normalizeHeader(header) {
-    return String(header || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
-}
-
-function pickColumn(row, headerMap, aliases) {
-    for (const alias of aliases) {
-        const key = normalizeHeader(alias);
-        if (headerMap[key] !== undefined) {
-            return row[headerMap[key]] || '';
-        }
-    }
-    return '';
-}
-
-function parseMoney(value) {
-    if (value == null || value === '') return null;
-    const normalized = String(value)
-        .replace(/[$£,\s]/g, '')
-        .replace(/^\((.*)\)$/, '-$1');
-    const parsed = Number.parseFloat(normalized);
-    return Number.isFinite(parsed) ? parsed : null;
-}
-
-function parseCsvDate(dateValue, timeValue = '') {
-    const rawDate = String(dateValue || '').trim();
-    const rawTime = String(timeValue || '').trim();
-    if (!rawDate) return null;
-
-    const ukMatch = rawDate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (ukMatch) {
-        const [, day, month, year] = ukMatch;
-        const isoDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-        return rawTime ? `${isoDate}T${rawTime}` : `${isoDate}T00:00:00`;
-    }
-
-    const direct = new Date(rawTime ? `${rawDate} ${rawTime}` : rawDate);
-    return Number.isNaN(direct.getTime()) ? null : direct.toISOString();
-}
-
-function inferImportedCategory({ description, reference, category, type, signedAmount }) {
-    const text = [description, reference, category, type]
-        .map(value => String(value || '').toLowerCase())
-        .join(' ');
-
-    if (/(^|\W)(dla|dal)(-|\W|\d)/i.test(text) || /director'?s? loan|monzo-to-monzo.*andrew kemp/i.test(text)) {
-        return 'DLA Payment';
-    }
-
-    if (/mileage|fuel|petrol|parking|train|uber|taxi|travel/i.test(text)) {
-        return 'Travel';
-    }
-
-    if (/software|hostinger|domain|hosting|saas|adobe|microsoft|google workspace/i.test(text)) {
-        return 'Software & IT';
-    }
-
-    if (/equipment|ubiquiti|laptop|ipad|monitor|computer|hardware/i.test(text)) {
-        return 'Computer Equipment';
-    }
-
-    if (/office|stationery|printer|postage|stickerapp/i.test(text)) {
-        return 'Office Costs';
-    }
-
-    if (signedAmount > 0) {
-        if (/\binv[-\s]?\d|\b\d{6}-\s*\d{3}\b|consult|security ninja|delaware digital|income/i.test(text)) {
-            return 'Sales';
-        }
-        return 'Other Income';
-    }
-
-    if (/card payment|general|expense|ebay|amazon|purchase/i.test(text)) {
-        return 'Other Expenses';
-    }
-
-    return category || '';
-}
-
-function parseCsvTransactions(csvText, bankAccountId) {
-    const lines = csvText
-        .replace(/^\uFEFF/, '')
-        .split(/\r?\n/)
-        .map(line => line.trim())
-        .filter(Boolean);
-
-    if (lines.length < 2) {
-        throw new Error('CSV must include a header row and at least one transaction row');
-    }
-
-    const headers = parseCsvLine(lines[0]);
-    const headerMap = headers.reduce((map, header, index) => {
-        map[normalizeHeader(header)] = index;
-        return map;
-    }, {});
-
-    const transactions = [];
-
-    for (let lineIndex = 1; lineIndex < lines.length; lineIndex += 1) {
-        const row = parseCsvLine(lines[lineIndex]);
-        if (row.every(cell => !String(cell || '').trim())) continue;
-
-        const dateValue = pickColumn(row, headerMap, ['date', 'transaction date', 'booking date', 'booked date', 'posted date']);
-        const timeValue = pickColumn(row, headerMap, ['time', 'transaction time']);
-        const descriptionValue = pickColumn(row, headerMap, ['description', 'details', 'narrative', 'transaction', 'payee', 'memo', 'name', 'merchant']);
-        const notesValue = pickColumn(row, headerMap, ['notes and #tags', 'notes', 'tags']);
-        const typeValue = pickColumn(row, headerMap, ['type']);
-        const categoryValue = pickColumn(row, headerMap, ['category']);
-        const referenceValue = pickColumn(row, headerMap, ['reference', 'transaction id', 'id']);
-        const balanceValue = pickColumn(row, headerMap, ['balance', 'running balance']);
-
-        const amountValue = pickColumn(row, headerMap, ['amount', 'transaction amount', 'value']);
-        const debitValue = pickColumn(row, headerMap, ['debit', 'paid out', 'withdrawal', 'money out']);
-        const creditValue = pickColumn(row, headerMap, ['credit', 'paid in', 'deposit', 'money in']);
-
-        let signedAmount = parseMoney(amountValue);
-        if (signedAmount == null) {
-            const debit = parseMoney(debitValue);
-            const credit = parseMoney(creditValue);
-            if (credit != null) signedAmount = credit;
-            else if (debit != null) signedAmount = -Math.abs(debit);
-        }
-
-        const normalizedDate = parseCsvDate(dateValue, timeValue);
-        const normalizedDescription = [descriptionValue, notesValue, typeValue]
-            .map(value => String(value || '').trim())
-            .filter(Boolean)
-            .join(' - ');
-
-        if (!normalizedDate || signedAmount == null || !normalizedDescription) {
-            continue;
-        }
-
-        const inferredCategory = inferImportedCategory({
-            description: normalizedDescription,
-            reference: referenceValue,
-            category: categoryValue,
-            type: typeValue,
-            signedAmount
-        });
-
-        transactions.push({
-            bankAccountId,
-            transactionDate: normalizedDate,
-            amount: Math.abs(signedAmount),
-            description: normalizedDescription,
-            reference: referenceValue || null,
-            category: inferredCategory,
-            direction: signedAmount >= 0 ? 'In' : 'Out',
-            balance: parseMoney(balanceValue),
-            externalId: referenceValue || null,
-            source: 'CSV'
-        });
-    }
-
-    if (transactions.length === 0) {
-        throw new Error('No transactions could be parsed. Expected columns like Date, Description and Amount, or Date with Debit/Credit');
-    }
-
-    return transactions;
-}
-
 export default function Banking() {
     const [accounts, setAccounts] = useState([]);
     const [selectedAccount, setSelectedAccount] = useState(null);
@@ -230,6 +45,7 @@ export default function Banking() {
     const [showGcPicker, setShowGcPicker] = useState(false);
     const [gcPickerAccountId, setGcPickerAccountId] = useState(null);
     const [csvImporting, setCsvImporting] = useState(false);
+    const [csvPreview, setCsvPreview] = useState(null);
     const csvInputRef = useRef(null);
 
     const gcInstitutionList = Array.isArray(gcInstitutions)
@@ -319,6 +135,7 @@ export default function Banking() {
     }
 
     const handleSelectAccount = async (account) => {
+        setCsvPreview(null);
         setSelectedAccount(account);
         await loadTransactions(account.id);
     };
@@ -399,14 +216,40 @@ export default function Banking() {
         if (!file || !selectedAccount) return;
 
         setCsvImporting(true);
+        setCsvPreview(null);
         try {
             const csvText = await file.text();
-            const parsedTransactions = parseCsvTransactions(csvText, selectedAccount.id);
-            await importBankTransactions(parsedTransactions);
-            await loadTransactions(selectedAccount.id);
-            setSyncResult({ success: true, message: `Imported ${parsedTransactions.length} transaction${parsedTransactions.length !== 1 ? 's' : ''} from ${file.name}` });
+            const parsed = parseBankCsv(csvText, selectedAccount.id, selectedAccount.currency || 'GBP');
+            const existing = await getBankTransactionsByAccount(selectedAccount.id);
+            let comparison;
+            try {
+                const [invoices, expenses, dlaEntries, dlaPayments, ledgerEntries] = await Promise.all([
+                    getInvoices(), getExpenses(), getDlaEntries(), getAllDlaPayments(), getCompanyLedger('all')
+                ]);
+                comparison = compareBankToApp(parsed.transactions, { invoices, expenses, dlaEntries, dlaPayments, ledgerEntries });
+            } catch (error) {
+                comparison = { comparisonError: error.message };
+            }
+            setCsvPreview({ ...previewBankImport(parsed.transactions, existing), ...parsed, ...comparison, fileName: file.name, accountId: selectedAccount.id, currency: selectedAccount.currency || 'GBP' });
         } catch (error) {
             console.error('Error importing CSV:', error);
+            setSyncResult({ success: false, message: `CSV import failed: ${error.message}` });
+        } finally {
+            setCsvImporting(false);
+        }
+    };
+
+    const handleConfirmCsvImport = async () => {
+        if (!csvPreview || csvPreview.accountId !== selectedAccount?.id || csvImporting) return;
+        setCsvImporting(true);
+        try {
+            const existing = await getBankTransactionsByAccount(csvPreview.accountId);
+            const latest = previewBankImport(csvPreview.newTransactions, existing);
+            const result = latest.newTransactions.length ? await importBankTransactions(latest.newTransactions) : [];
+            await loadTransactions(csvPreview.accountId);
+            setSyncResult({ success: true, message: `Imported ${Array.isArray(result) ? result.length : latest.newTransactions.length} new transactions; ${csvPreview.duplicates.length + latest.duplicates.length} duplicates skipped` });
+            setCsvPreview(null);
+        } catch (error) {
             setSyncResult({ success: false, message: `CSV import failed: ${error.message}` });
         } finally {
             setCsvImporting(false);
@@ -726,7 +569,7 @@ export default function Banking() {
                             {accounts.map(account => (
                                 <tr key={account.id}>
                                     <td>
-                                        <button className="btn-link" onClick={() => handleSelectAccount(account)}>
+                                        <button className="btn-link" onClick={() => handleSelectAccount(account)} disabled={csvImporting}>
                                             {account.accountName}
                                         </button>
                                     </td>
@@ -777,15 +620,13 @@ export default function Banking() {
                                 onChange={handleCsvSelected}
                             />
                             <button className="btn-secondary" onClick={handleCsvImportClick} disabled={csvImporting}>
-                                {csvImporting ? 'Importing CSV...' : 'Import CSV'}
+                                {csvImporting ? 'Reading CSV...' : 'Import CSV'}
                             </button>
                             <button className="btn-primary" onClick={handleNewTransaction}>+ Add Transaction</button>
                         </div>
                     </div>
 
-                    <div style={{ marginBottom: '0.9rem', fontSize: '0.82rem', color: '#6b7280' }}>
-                        CSV import expects common bank columns such as Date, Description and Amount, or Date with separate Debit and Credit columns.
-                    </div>
+                    {csvPreview && <BankImportPreview preview={csvPreview} processing={csvImporting} onConfirm={handleConfirmCsvImport} onCancel={() => setCsvPreview(null)} />}
 
                     {showTransactionForm && (
                         <div className="form-card">

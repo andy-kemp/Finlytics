@@ -58,9 +58,11 @@ export default function Reconciliation() {
         setMessage(null);
         try {
             const result = await previewAutoReconcileTransactions();
+            const internalTransferIds = new Set(transactions.filter(transaction => transaction.category === 'Internal Transfer').map(transaction => transaction.id));
+            result.proposals = (result.proposals || []).filter(proposal => !internalTransferIds.has(proposal.bankTransactionId));
             const defaults = {};
             (result.proposals || []).forEach((proposal) => {
-                if (proposal.recommended) {
+                if (proposal.recommended && !proposal.isAmbiguous && proposal.recommended.score >= 95) {
                     defaults[proposal.bankTransactionId] = `${proposal.recommended.relatedType}:${proposal.recommended.relatedId}`;
                 }
             });
@@ -198,7 +200,7 @@ export default function Reconciliation() {
                                                         value={selected}
                                                         onChange={(e) => handleMatchSelection(proposal.bankTransactionId, e.target.value)}
                                                         disabled={processing}
-                                                        style={{ minWidth: 320 }}
+                                                        style={{ width: '100%', minWidth: 160, maxWidth: 360 }}
                                                     >
                                                         <option value="">Do not apply</option>
                                                         {(proposal.candidates || []).map((candidate) => (
@@ -212,7 +214,7 @@ export default function Reconciliation() {
                                                     </select>
                                                 </td>
                                                 <td>
-                                                    {proposal.isAmbiguous ? 'Ambiguous' : 'High'}
+                                                    {proposal.isAmbiguous ? 'Ambiguous' : proposal.recommended?.score >= 95 ? 'High' : 'Review'}
                                                     {chosen ? ` / score ${chosen.score}` : ''}
                                                 </td>
                                             </tr>
