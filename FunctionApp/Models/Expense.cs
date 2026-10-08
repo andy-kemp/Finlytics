@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace FinanceHubFunctions.Models
 {
-    public class Expense
+    public class Expense : IForeignCurrencyRecord
     {
         public int Id { get; set; }
         public string? ExpenseId { get; set; }
@@ -17,6 +17,17 @@ namespace FinanceHubFunctions.Models
         public decimal? AmountNet { get; set; }
         public decimal? VATAmount { get; set; }
         public decimal? AmountGross { get; set; }
+        public string? OriginalCurrency { get; set; }
+        public decimal? OriginalAmountNet { get; set; }
+        public decimal? OriginalVatAmount { get; set; }
+        public decimal? OriginalAmountGross { get; set; }
+        public decimal? ExchangeRateToGbp { get; set; }
+        public DateTime? ExchangeRateDate { get; set; }
+        public string? ExchangeRateSource { get; set; }
+        public decimal? EstimatedGbpGross { get; set; }
+        public decimal? ActualGbpPaid { get; set; }
+        public DateTime? SettlementDate { get; set; }
+        public int? SettlementBankTransactionId { get; set; }
         public DateTime? EntryDate { get; set; }
         public DateTime? DatePaid { get; set; }
         public string? PaymentMethod { get; set; }

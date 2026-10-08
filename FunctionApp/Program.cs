@@ -168,6 +168,7 @@ var host = new HostBuilder()
         services.AddScoped<MissingReceiptDeclarationPdfService>();
         services.AddScoped<CreditNotePdfService>();
         services.AddSingleton<ClerkAuthService>();
+        services.AddSingleton<SettlementAuthService>();
         var storageConnectionString = context.Configuration["AzureWebJobsStorage"];
         var storageBlobServiceUri = context.Configuration["AzureWebJobsStorage__blobServiceUri"];
         if (!string.IsNullOrEmpty(storageConnectionString))

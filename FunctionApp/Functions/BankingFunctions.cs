@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging;
 using FinanceHubFunctions.Data;
 using FinanceHubFunctions.Models;
 using FinanceHubFunctions.Services;
+using FinanceHubFunctions.Helpers;
 
 namespace FinanceHubFunctions.Functions
 {
@@ -179,14 +180,20 @@ namespace FinanceHubFunctions.Functions
             }
 
             var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-            var transaction = JsonSerializer.Deserialize<BankTransaction>(requestBody, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            if (transaction == null)
+            if (!ForeignCurrencyHelper.TryRead<BankTransaction>(requestBody, out var transaction, out var parseError))
             {
                 var bad = req.CreateResponse(HttpStatusCode.BadRequest);
-                await bad.WriteAsJsonAsync(new { error = "Invalid bank transaction payload" });
+                await bad.WriteAsJsonAsync(new { error = parseError });
                 return bad;
             }
 
+            var currencyError = ForeignCurrencyHelper.ValidateBank(transaction!);
+            if (currencyError != null)
+            {
+                var bad = req.CreateResponse(HttpStatusCode.BadRequest);
+                await bad.WriteAsJsonAsync(new { error = currencyError });
+                return bad;
+            }
             transaction.CreatedDate = DateTime.UtcNow;
             transaction.ModifiedDate = DateTime.UtcNow;
             var created = await _bankTransactionRepository.CreateAsync(transaction);
@@ -207,16 +214,22 @@ namespace FinanceHubFunctions.Functions
             }
 
             var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-            var transactions = JsonSerializer.Deserialize<List<BankTransaction>>(requestBody, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            if (transactions == null)
+            if (!ForeignCurrencyHelper.TryRead<List<BankTransaction>>(requestBody, out var transactions, out var parseError))
             {
                 var bad = req.CreateResponse(HttpStatusCode.BadRequest);
-                await bad.WriteAsJsonAsync(new { error = "Invalid transactions payload" });
+                await bad.WriteAsJsonAsync(new { error = parseError });
                 return bad;
             }
 
-            foreach (var transaction in transactions)
+            foreach (var transaction in transactions!)
             {
+                var currencyError = transaction == null ? "Invalid bank transaction" : ForeignCurrencyHelper.ValidateBank(transaction);
+                if (currencyError != null)
+                {
+                    var bad = req.CreateResponse(HttpStatusCode.BadRequest);
+                    await bad.WriteAsJsonAsync(new { error = currencyError });
+                    return bad;
+                }
                 transaction.CreatedDate = DateTime.UtcNow;
                 transaction.ModifiedDate = DateTime.UtcNow;
             }
@@ -260,14 +273,49 @@ namespace FinanceHubFunctions.Functions
             }
 
             var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-            var transaction = JsonSerializer.Deserialize<BankTransaction>(requestBody, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            if (transaction == null)
+            if (!ForeignCurrencyHelper.TryRead<BankTransaction>(requestBody, out var transaction, out var parseError))
             {
                 var bad = req.CreateResponse(HttpStatusCode.BadRequest);
-                await bad.WriteAsJsonAsync(new { error = "Invalid bank transaction payload" });
+                await bad.WriteAsJsonAsync(new { error = parseError });
                 return bad;
             }
 
+            var existing = await _bankTransactionRepository.GetByIdAsync(id);
+            if (existing == null)
+            {
+                return req.CreateResponse(HttpStatusCode.NotFound);
+            }
+            ForeignCurrencyHelper.PreserveOmitted(transaction!, existing, requestBody);
+            var currencyError = ForeignCurrencyHelper.ValidateBank(transaction!);
+            if (currencyError != null)
+            {
+                var bad = req.CreateResponse(HttpStatusCode.BadRequest);
+                await bad.WriteAsJsonAsync(new { error = currencyError });
+                return bad;
+            }
+            existing.BankAccountId = transaction!.BankAccountId;
+            existing.TransactionDate = transaction.TransactionDate;
+            existing.Amount = transaction.Amount;
+            existing.OriginalCurrency = transaction.OriginalCurrency;
+            existing.OriginalAmount = transaction.OriginalAmount;
+            existing.Description = transaction.Description;
+            existing.Reference = transaction.Reference;
+            existing.Category = transaction.Category;
+            existing.Direction = transaction.Direction;
+            existing.Balance = transaction.Balance;
+            existing.ExternalId = transaction.ExternalId;
+            existing.Source = transaction.Source;
+            existing.IsReconciled = transaction.IsReconciled;
+            existing.ReconciledOn = transaction.ReconciledOn;
+            existing.ReconciledBy = transaction.ReconciledBy;
+            existing.MonzoTransactionId = transaction.MonzoTransactionId;
+            existing.MonzoMerchantName = transaction.MonzoMerchantName;
+            existing.MonzoCategory = transaction.MonzoCategory;
+            existing.MonzoNotes = transaction.MonzoNotes;
+            existing.TrueLayerTransactionId = transaction.TrueLayerTransactionId;
+            existing.TrueLayerMerchantName = transaction.TrueLayerMerchantName;
+            existing.TrueLayerCategory = transaction.TrueLayerCategory;
+            transaction = existing;
             transaction.Id = id;
             transaction.ModifiedDate = DateTime.UtcNow;
             var updated = await _bankTransactionRepository.UpdateAsync(transaction);

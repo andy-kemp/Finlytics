@@ -1,0 +1,18 @@
+.foreign-currency-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 0.75rem; width: 100%; min-width: 0; grid-column: 1 / -1; }
+.foreign-currency-fields .form-group { display: flex; flex-direction: column; gap: 0.3rem; margin: 0; min-width: 0; }
+.foreign-currency-fields input, .foreign-currency-fields select { width: 100%; min-width: 0; box-sizing: border-box; }
+.foreign-currency-fields output { padding: 0.5rem 0; font-variant-numeric: tabular-nums; }
+.currency-actions { display: flex; align-items: end; gap: 0.5rem; flex-wrap: wrap; grid-column: 1 / -1; }
+.currency-actions button { white-space: normal; }
+.currency-status, .currency-error { grid-column: 1 / -1; overflow-wrap: anywhere; font-size: 0.85rem; }
+.currency-error { color: #c62828; }
+.currency-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 0.75rem; }
+.currency-summary div { min-width: 0; overflow-wrap: anywhere; }
+.currency-summary dt { font-size: 0.8rem; opacity: 0.7; }
+.currency-summary dd { margin: 0.25rem 0 0; font-variant-numeric: tabular-nums; }
+@media (max-width: 768px) {
+    .currency-capture-layout { flex-direction: column; overflow-y: auto !important; }
+    .currency-capture-layout > div { flex: none !important; overflow: visible !important; }
+    .currency-capture-line { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+    .currency-capture-line > :first-child { grid-column: 1 / -1; }
+}

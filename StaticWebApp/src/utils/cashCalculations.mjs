@@ -13,7 +13,8 @@ export function calculateRecordedTradingCash({
     const loansById = new Map(dlaEntries.map(entry => [entry.dlaId, entry]));
     const income = invoices
         .filter(invoice => invoice.status === 'Paid' && inRange(invoice.datePaid || invoice.dateIssued));
-    const expensePayments = sum(expenses.filter(expense => !expense.isDLA && inRange(expense.datePaid)), 'amountGross');
+    const expensePayments = sum(expenses.filter(expense => !expense.isDLA && inRange(expense.settlementDate || expense.datePaid))
+        .map(expense => ({ amount: expense.actualGbpPaid ?? expense.amountGross })), 'amount');
     const payments = dlaPayments.filter(payment => inRange(payment.paymentDate));
     const directorRepayments = sum(payments.filter(payment => loansById.get(payment.dlaId)?.direction !== 'OwedToCompany'), 'amount');
     const directorReceipts = sum(payments.filter(payment => loansById.get(payment.dlaId)?.direction === 'OwedToCompany'), 'amount');

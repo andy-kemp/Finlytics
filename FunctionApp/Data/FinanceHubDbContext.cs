@@ -52,6 +52,19 @@ namespace FinanceHubFunctions.Data
         public DbSet<GoCardlessPayment> GoCardlessPayments { get; set; }
         public DbSet<Bill> Bills { get; set; }
 
+        private static void ConfigureForeignCurrency<TEntity>(Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder<TEntity> entity)
+            where TEntity : class, IForeignCurrencyRecord
+        {
+            entity.Property(record => record.OriginalCurrency).HasMaxLength(3);
+            entity.Property(record => record.OriginalAmountNet).HasColumnType("decimal(18,2)");
+            entity.Property(record => record.OriginalVatAmount).HasColumnType("decimal(18,2)");
+            entity.Property(record => record.OriginalAmountGross).HasColumnType("decimal(18,2)");
+            entity.Property(record => record.ExchangeRateToGbp).HasColumnType("decimal(18,8)");
+            entity.Property(record => record.ExchangeRateSource).HasMaxLength(100);
+            entity.Property(record => record.EstimatedGbpGross).HasColumnType("decimal(18,2)");
+            entity.Property(record => record.ActualGbpPaid).HasColumnType("decimal(18,2)");
+        }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -187,6 +200,7 @@ namespace FinanceHubFunctions.Data
                 entity.Property(e => e.RecurringFrequency).HasMaxLength(20);
                 entity.Property(e => e.RecurringNextDate);
                 entity.Ignore(e => e.Attachments); // Store as JSON or in blob metadata
+                ConfigureForeignCurrency(entity);
             });
 
             // Quote configuration
@@ -273,6 +287,7 @@ namespace FinanceHubFunctions.Data
                 entity.Property(e => e.FinancialYear).HasMaxLength(50);
                 entity.HasIndex(e => e.DlaId).IsUnique();
                 entity.HasIndex(e => e.PeriodKey);
+                ConfigureForeignCurrency(entity);
             });
 
             // DlaPayment configuration
@@ -451,6 +466,8 @@ namespace FinanceHubFunctions.Data
             // BankTransaction configuration
             modelBuilder.Entity<BankTransaction>(entity =>
             {
+                entity.Property(e => e.OriginalCurrency).HasMaxLength(3);
+                entity.Property(e => e.OriginalAmount).HasColumnType("decimal(18,2)");
                 entity.ToTable("BankTransactions");
                 entity.HasKey(e => e.Id);
                 entity.Property(e => e.Id).ValueGeneratedOnAdd();

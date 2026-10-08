@@ -8,6 +8,8 @@ namespace FinanceHubFunctions.Models
         public int BankAccountId { get; set; }
         public DateTime? TransactionDate { get; set; }
         public decimal? Amount { get; set; }
+        public string? OriginalCurrency { get; set; }
+        public decimal? OriginalAmount { get; set; }
         public string? Description { get; set; }
         public string? Reference { get; set; }
         public string? Category { get; set; }

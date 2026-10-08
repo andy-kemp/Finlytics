@@ -141,6 +141,7 @@ namespace FinanceHubFunctions.Functions
                 var subTotal     = GetAmountField(doc, "SubTotal");
                 var totalTax     = GetAmountField(doc, "TotalTax");
                 var invoiceTotal = GetAmountField(doc, "InvoiceTotal");
+                var currency = GetCurrencyCode(doc);
 
                 // Extract line items from invoice model
                 var lines = new List<InvoiceLineItem>();
@@ -166,13 +167,13 @@ namespace FinanceHubFunctions.Functions
                             net = gross - vatAmt;
                         else if (gross.HasValue)
                         {
-                            net = Math.Round(gross.Value / 1.2m, 2);
+                            net = currency == "GBP" ? Math.Round(gross.Value / 1.2m, 2) : gross.Value;
                             vatAmt = gross.Value - net;
                         }
                         else if (unit.HasValue)
                         {
                             gross = Math.Round(unit.Value * qty, 2);
-                            net   = Math.Round(gross.Value / 1.2m, 2);
+                            net   = currency == "GBP" ? Math.Round(gross.Value / 1.2m, 2) : gross.Value;
                             vatAmt = gross.Value - net;
                         }
 
@@ -219,6 +220,7 @@ namespace FinanceHubFunctions.Functions
                             // receipt model uses TotalTax; older versions may use Tax
                             var rTax      = GetAmountField(rdoc, "TotalTax") ?? GetAmountField(rdoc, "Tax");
                             var rSubtotal = GetAmountField(rdoc, "Subtotal");
+                            var receiptCurrency = GetCurrencyCode(rdoc) ?? currency;
 
                             // Effective VAT rate from document totals (e.g. 23.33 / 116.62 = 0.2)
                             decimal? vatRate = (rTax.HasValue && rSubtotal.HasValue && rSubtotal.Value > 0)
@@ -260,7 +262,7 @@ namespace FinanceHubFunctions.Functions
                                         rGross = rItemTotal.Value;
                                         rVat   = vatRate.HasValue
                                             ? Math.Round(rGross.Value * vatRate.Value / (1m + vatRate.Value), 2)
-                                            : Math.Round(rGross.Value / 6m, 2); // assume 20%
+                                            : receiptCurrency == "GBP" ? Math.Round(rGross.Value / 6m, 2) : 0m;
                                         rNet   = rGross - rVat;
                                     }
                                     else if (rUnitPrice.HasValue)
@@ -270,7 +272,7 @@ namespace FinanceHubFunctions.Functions
                                         rGross = Math.Round(rUnitPrice.Value * rQty, 2);
                                         rVat   = vatRate.HasValue
                                             ? Math.Round(rGross.Value * vatRate.Value / (1m + vatRate.Value), 2)
-                                            : Math.Round(rGross.Value / 6m, 2); // assume 20%
+                                            : receiptCurrency == "GBP" ? Math.Round(rGross.Value / 6m, 2) : 0m;
                                         rNet   = rGross - rVat;
                                     }
                                     else { rGross = null; rVat = null; rNet = null; }
@@ -310,7 +312,7 @@ namespace FinanceHubFunctions.Functions
                                 if (sumGross > 0 && Math.Abs(sumGross - rTotal.Value) > 0.05m)
                                 {
                                     var scale = rTotal.Value / sumGross;
-                                    var vRate = vatRate ?? (1m / 6m); // 20% VAT → gross/6 = vat
+                                    var vRate = vatRate ?? (receiptCurrency == "GBP" ? 1m / 6m : 0m);
                                     rLines = rLines.Select(l => {
                                         var g = Math.Round(l.AmountGross * scale, 2);
                                         var v = Math.Round(g * vRate / (1m + vRate), 2);
@@ -331,7 +333,7 @@ namespace FinanceHubFunctions.Functions
                             {
                                 var perItem = Math.Round(rTotal.Value / rLines.Count, 2);
                                 var docVatRate = vatRate ?? (rTax.HasValue && rTotal.HasValue && rTotal.Value > 0
-                                    ? rTax.Value / rTotal.Value : 1m / 6m);
+                                    ? rTax.Value / rTotal.Value : receiptCurrency == "GBP" ? 1m / 6m : 0m);
                                 rLines = rLines.Select((l, i) => {
                                     var g = (i == rLines.Count - 1)
                                         ? rTotal.Value - perItem * (rLines.Count - 1) // last item gets remainder
@@ -342,6 +344,7 @@ namespace FinanceHubFunctions.Functions
                             }
 
                             // Merge: receipt data supersedes weak invoice data
+                            currency = receiptCurrency;
                             if (!string.IsNullOrEmpty(rVendor)) vendor = rVendor;
                             if (rDate.HasValue)  invoiceDate  = rDate;
                             if (rLines.Count > 0) lines        = rLines;
@@ -360,7 +363,7 @@ namespace FinanceHubFunctions.Functions
                 if (lines.Count == 0 && (subTotal.HasValue || invoiceTotal.HasValue))
                 {
                     var gross = invoiceTotal ?? (subTotal.HasValue && totalTax.HasValue ? subTotal + totalTax : subTotal);
-                    var tax   = totalTax.HasValue ? totalTax : (gross.HasValue ? Math.Round(gross.Value - Math.Round(gross.Value / 1.2m, 2), 2) : 0m);
+                    var tax   = totalTax.HasValue ? totalTax : (gross.HasValue && currency == "GBP" ? Math.Round(gross.Value - Math.Round(gross.Value / 1.2m, 2), 2) : 0m);
                     var net   = (gross ?? 0m) - (tax ?? 0m);
 
                     lines.Add(new InvoiceLineItem
@@ -379,6 +382,7 @@ namespace FinanceHubFunctions.Functions
                     vendor      = vendor,
                     invoiceDate = invoiceDate?.ToString("yyyy-MM-dd"),
                     invoiceRef  = invoiceId,
+                    currency    = currency,
                     lines       = lines
                 };
 
@@ -401,6 +405,30 @@ namespace FinanceHubFunctions.Functions
         {
             if (doc.Fields.TryGetValue(name, out var f) && f.FieldType == DocumentFieldType.String)
                 return f.Value.AsString();
+            return null;
+        }
+
+        private static string? GetCurrencyCode(AnalyzedDocument doc)
+        {
+            foreach (var name in new[] { "InvoiceTotal", "Total", "SubTotal", "Subtotal", "TotalTax", "Tax" })
+            {
+                if (!doc.Fields.TryGetValue(name, out var field) || field.FieldType != DocumentFieldType.Currency) continue;
+                var code = field.Value.AsCurrency().Code;
+                if (!string.IsNullOrWhiteSpace(code)) return code.Trim().ToUpperInvariant();
+            }
+            return FindCurrencyCode(doc.Fields.Values);
+        }
+
+        private static string? FindCurrencyCode(IEnumerable<DocumentField> fields)
+        {
+            foreach (var field in fields)
+            {
+                string? code = null;
+                if (field.FieldType == DocumentFieldType.Currency) code = field.Value.AsCurrency().Code;
+                else if (field.FieldType == DocumentFieldType.Dictionary) code = FindCurrencyCode(field.Value.AsDictionary().Values);
+                else if (field.FieldType == DocumentFieldType.List) code = FindCurrencyCode(field.Value.AsList());
+                if (!string.IsNullOrWhiteSpace(code)) return code.Trim().ToUpperInvariant();
+            }
             return null;
         }
 

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import BankImportPreview from './BankImportPreview';
 import { parseBankCsv, previewBankImport } from '../utils/bankCsv.mjs';
 import { compareBankToApp } from '../utils/bankReconciliation.mjs';
-import { getInvoices, getExpenses, getDlaEntries, getAllDlaPayments, getCompanyLedger } from '../services/apiService';
+import { getInvoices, getExpenses, getDlaEntries, getAllDlaPayments, getCompanyLedger, confirmExpenseGbpSettlement } from '../services/apiService';
 import { getBankAccounts, createBankAccount, updateBankAccount, deleteBankAccount, getBankTransactionsByAccount, createBankTransaction, importBankTransactions, getTrueLayerStatus, getTrueLayerAuthUrl, syncTrueLayerTransactions, disconnectTrueLayer, getGoCardlessInstitutions, connectBankGoCardless, syncGoCardlessTransactions, getGoCardlessBankStatus } from '../services/apiService';
 
 const defaultAccount = {
@@ -251,6 +251,47 @@ export default function Banking() {
             setCsvPreview(null);
         } catch (error) {
             setSyncResult({ success: false, message: `CSV import failed: ${error.message}` });
+        } finally {
+            setCsvImporting(false);
+        }
+    };
+
+    const handleConfirmSettlement = async (rowIndex, proposal) => {
+        const transaction = csvPreview?.transactions[rowIndex];
+        if (!transaction || csvImporting || csvPreview.accountId !== selectedAccount?.id || !transaction.externalId || proposal.ambiguous) return;
+        if (!import.meta.env.VITE_SETTLEMENT_API_SCOPE) return;
+        if (csvPreview.rejected.length || csvPreview.statement.balanceErrors.length) return;
+        if (!window.confirm(`Record GBP ${proposal.actualGbp.toFixed(2)} paid for ${proposal.label}? Invoice and VAT amounts will remain unchanged.`)) return;
+        setCsvImporting(true);
+        try {
+            const records = await getExpenses();
+            const expense = records.find(record => record.id === proposal.expenseId);
+            if (!expense || expense.actualGbpPaid != null) throw new Error('Expense has changed. Reload the statement preview.');
+            const current = compareBankToApp([transaction], { expenses: [expense] }).comparisons[0].settlementCandidates?.[0];
+            if (!current || current.actualGbp !== proposal.actualGbp) throw new Error('Settlement no longer matches the invoice.');
+            let bankRecords = await getBankTransactionsByAccount(selectedAccount.id);
+            let bankTransaction = bankRecords.find(record => record.externalId === transaction.externalId || record.monzoTransactionId === transaction.externalId);
+            if (!bankTransaction) {
+                await importBankTransactions([transaction]);
+                bankRecords = await getBankTransactionsByAccount(selectedAccount.id);
+                bankTransaction = bankRecords.find(record => record.externalId === transaction.externalId || record.monzoTransactionId === transaction.externalId);
+            }
+            if (!bankTransaction || bankTransaction.direction !== 'Out' || Math.round(Number(bankTransaction.amount) * 100) !== Math.round(proposal.actualGbp * 100)) throw new Error('Imported bank transaction differs from the proposal.');
+            await confirmExpenseGbpSettlement(expense.id, {
+                actualGbpPaid: proposal.actualGbp,
+                settlementDate: bankTransaction.transactionDate,
+                settlementBankTransactionId: bankTransaction.id
+            });
+            setCsvPreview(previous => {
+                const next = { ...previous, ...previewBankImport(previous.transactions, bankRecords) };
+                next.comparisons = previous.comparisons.map((comparison, index) => index === rowIndex
+                    ? { ...comparison, status: 'GBP settlement confirmed', settlementCandidates: [] } : comparison);
+                return next;
+            });
+            await loadTransactions(selectedAccount.id);
+            setSyncResult({ success: true, message: `GBP ${proposal.actualGbp.toFixed(2)} settlement saved; invoice and VAT amounts unchanged` });
+        } catch (error) {
+            setSyncResult({ success: false, message: `Settlement failed: ${error.message}. Any imported bank row is retained for review.` });
         } finally {
             setCsvImporting(false);
         }
@@ -626,7 +667,7 @@ export default function Banking() {
                         </div>
                     </div>
 
-                    {csvPreview && <BankImportPreview preview={csvPreview} processing={csvImporting} onConfirm={handleConfirmCsvImport} onCancel={() => setCsvPreview(null)} />}
+                    {csvPreview && <BankImportPreview preview={csvPreview} processing={csvImporting} onConfirm={handleConfirmCsvImport} onCancel={() => setCsvPreview(null)} onSettlement={import.meta.env.VITE_SETTLEMENT_API_SCOPE ? handleConfirmSettlement : undefined} />}
 
                     {showTransactionForm && (
                         <div className="form-card">

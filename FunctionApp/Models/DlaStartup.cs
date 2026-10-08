@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace FinanceHubFunctions.Models
 {
-    public class DlaStartupRequest
+    public class DlaStartupRequest : ForeignCurrencyMetadata
     {
         public string Mode { get; set; } = "Single"; // Single | Itemised
         public string Director { get; set; } = string.Empty;
@@ -17,7 +17,7 @@ namespace FinanceHubFunctions.Models
         public List<DlaStartupItem> Items { get; set; } = new();
     }
 
-    public class DlaStartupItem
+    public class DlaStartupItem : ForeignCurrencyMetadata
     {
         public DateTime? EntryDate { get; set; }
         public string Description { get; set; } = string.Empty;

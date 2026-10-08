@@ -10,6 +10,8 @@ using Microsoft.Azure.Functions.Worker.Http;
 using FinanceHubFunctions.Data;
 using FinanceHubFunctions.Models;
 using FinanceHubFunctions.Services;
+using FinanceHubFunctions.Helpers;
+using Microsoft.EntityFrameworkCore;
 
 namespace FinanceHubFunctions.Functions
 {
@@ -25,6 +27,7 @@ namespace FinanceHubFunctions.Functions
         private const decimal DefaultThresholdMiles = 10000m;
 
         private readonly ClerkAuthService _clerkAuth;
+        private readonly FinanceHubDbContext _db;
         private readonly ITeamMemberRepository _teamMemberRepo;
         private readonly IExpenseRepository _expenseRepo;
         private readonly IMileageTripRepository _mileageRepo;
@@ -39,8 +42,10 @@ namespace FinanceHubFunctions.Functions
             IMileageTripRepository mileageRepo,
             IEmployeeRepository employeeRepo,
             ICompanySettingsRepository companySettingsRepo,
+            FinanceHubDbContext db,
             BlobStorageService? blobService = null)
         {
+            _db = db;
             _clerkAuth = clerkAuth;
             _teamMemberRepo = teamMemberRepo;
             _expenseRepo = expenseRepo;
@@ -154,11 +159,18 @@ namespace FinanceHubFunctions.Functions
                     return badReq;
                 }
 
-                var expense = JsonSerializer.Deserialize<Expense>(body, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                if (expense == null)
+                if (!ForeignCurrencyHelper.TryRead<Expense>(body, out var expense, out var parseError))
                 {
                     var badReq = req.CreateResponse(HttpStatusCode.BadRequest);
-                    await badReq.WriteAsJsonAsync(new { error = "Invalid expense data" });
+                    await badReq.WriteAsJsonAsync(new { error = parseError }, HttpStatusCode.BadRequest);
+                    return badReq;
+                }
+
+                var currencyError = ForeignCurrencyHelper.Validate(expense!, isNew: true);
+                if (currencyError != null)
+                {
+                    var badReq = req.CreateResponse(HttpStatusCode.BadRequest);
+                    await badReq.WriteAsJsonAsync(new { error = currencyError }, HttpStatusCode.BadRequest);
                     return badReq;
                 }
 
@@ -204,6 +216,11 @@ namespace FinanceHubFunctions.Functions
             var (member, error) = await AuthenticateEmployee(req);
             if (error != null) return error;
 
+            var body = await req.ReadAsStringAsync();
+            return await _db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+            {
+            _db.ChangeTracker.Clear();
+            await using var settlementTransaction = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
             var existing = await _expenseRepo.GetByIdAsync(id);
             if (existing == null || existing.SubmittedByTeamMemberId != member!.Id)
             {
@@ -220,21 +237,29 @@ namespace FinanceHubFunctions.Functions
                 return forbidden;
             }
 
-            var body = await req.ReadAsStringAsync();
-            var updates = JsonSerializer.Deserialize<Expense>(body ?? "", new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            if (updates == null)
+            if (!ForeignCurrencyHelper.TryRead<Expense>(body, out var updates, out var parseError))
             {
                 var badReq = req.CreateResponse(HttpStatusCode.BadRequest);
-                await badReq.WriteAsJsonAsync(new { error = "Invalid data" });
+                await badReq.WriteAsJsonAsync(new { error = parseError }, HttpStatusCode.BadRequest);
                 return badReq;
             }
+
+            ForeignCurrencyHelper.PreserveOmitted(updates!, existing, body!);
+            var currencyError = ForeignCurrencyHelper.Validate(updates!, existing: existing);
+            if (currencyError != null)
+            {
+                var badReq = req.CreateResponse(HttpStatusCode.BadRequest);
+                await badReq.WriteAsJsonAsync(new { error = currencyError }, HttpStatusCode.BadRequest);
+                return badReq;
+            }
+            ForeignCurrencyHelper.Copy(updates!, existing);
 
             // Update allowed fields
             existing.Supplier = updates.Supplier;
             existing.Category = updates.Category;
-            existing.AmountNet = updates.AmountNet;
-            existing.VATAmount = updates.VATAmount;
-            existing.AmountGross = updates.AmountGross;
+            if (ForeignCurrencyHelper.HasProperty(body!, "amountNet")) existing.AmountNet = updates.AmountNet;
+            if (ForeignCurrencyHelper.HasProperty(body!, "vatAmount")) existing.VATAmount = updates.VATAmount;
+            if (ForeignCurrencyHelper.HasProperty(body!, "amountGross")) existing.AmountGross = updates.AmountGross;
             existing.VATApplicability = updates.VATApplicability;
             existing.VATRate = updates.VATRate;
             existing.VATIncluded = updates.VATIncluded;
@@ -247,9 +272,11 @@ namespace FinanceHubFunctions.Functions
             existing.RejectionReason = null;  // Clear previous rejection
 
             var updated = await _expenseRepo.UpdateAsync(existing);
+            await settlementTransaction.CommitAsync();
             var response = req.CreateResponse(HttpStatusCode.OK);
             await response.WriteAsJsonAsync(updated);
             return response;
+            });
         }
 
         // ─────────────────────────────────────────────────

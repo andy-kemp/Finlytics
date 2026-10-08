@@ -1,3 +1,9 @@
+test('confirmed bank settlement changes cash only, preserving accounting and tax amounts', () => {
+    const expense = { datePaid: '2026-09-01', settlementDate: '2026-09-22', amountGross: 78, vatAmount: 0, actualGbpPaid: 75 };
+    assert.equal(calculateRecordedTradingCash({ expenses: [expense] }).cashOut, 75);
+    assert.equal(expense.amountGross, 78);
+    assert.equal(expense.vatAmount, 0);
+});
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { calculateRecordedTradingCash } from './cashCalculations.mjs';

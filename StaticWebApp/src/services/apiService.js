@@ -1,4 +1,6 @@
 import { msalInstance, loginRequest } from '../auth/authConfig';
+import { currencyMetadata } from '../utils/foreignCurrencyForm.mjs';
+import { getSettlementHeaders } from '../utils/settlementAuth.mjs';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'https://financehub-func-kemponline.azurewebsites.net/api';
 
@@ -259,6 +261,7 @@ export async function getExpenses({ companyOnly = false } = {}) {
         }
         
         return {
+            ...currencyMetadata(expense),
             id: expense.id ?? expense.Id,
             expenseId: expense.expenseId || expense.ExpenseId,
             supplier: expense.supplier || expense.Supplier || expense.SupplierFreeText,
@@ -268,9 +271,9 @@ export async function getExpenses({ companyOnly = false } = {}) {
             vatApplicability: expense.vatApplicability || expense.VATApplicability,
             vatIncluded: expense.vatIncluded !== undefined ? expense.vatIncluded : expense.VATIncluded,
             vatRate: expense.vatRate || expense.VATRate,
-            amountNet: expense.amountNet || expense.AmountNet,
-            vatAmount: expense.vatAmount || expense.VATAmount,
-            amountGross: expense.amountGross || expense.AmountGross,
+            amountNet: expense.amountNet ?? expense.AmountNet,
+            vatAmount: expense.vatAmount ?? expense.VATAmount,
+            amountGross: expense.amountGross ?? expense.AmountGross,
             entryDate: expense.entryDate || expense.EntryDate,
             datePaid: expense.datePaid || expense.DatePaid,
             paymentMethod: expense.paymentMethod || expense.PaymentMethod,
@@ -366,6 +369,18 @@ export async function updateExpense(id, expense) {
     if (!response.ok) {
         const error = await response.json().catch(() => ({ error: 'Unknown error' }));
         throw new Error(error.error || 'Failed to update expense');
+    }
+    return response.json();
+}
+
+export async function confirmExpenseGbpSettlement(id, settlement) {
+    const headers = await getSettlementHeaders(msalInstance, import.meta.env.VITE_SETTLEMENT_API_SCOPE, msalInstance.getAllAccounts()[0]);
+    const response = await fetch(`${API_BASE}/expenses/${id}/gbp-settlement`, {
+        method: 'PATCH', headers, body: JSON.stringify(settlement)
+    });
+    if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || 'GBP settlement could not be confirmed');
     }
     return response.json();
 }

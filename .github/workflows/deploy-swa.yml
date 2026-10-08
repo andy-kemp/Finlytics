@@ -28,6 +28,8 @@ jobs:
 
       - name: Build
         working-directory: StaticWebApp
+        env:
+          VITE_SETTLEMENT_API_SCOPE: api://e11e81e7-3bdb-4ff3-b4c9-9113b600fb25/Settlement.Write
         run: npm run build
 
       - name: Deploy to Azure Static Web Apps

@@ -4,6 +4,9 @@ import Toast from './Toast';
 import { useToast } from '../hooks/useToast';
 import TrivialBenefitModal from './TrivialBenefitModal';
 import ConfirmDeleteModal from './ConfirmDeleteModal';
+import ForeignCurrencyFields, { ForeignCurrencySummary } from './ForeignCurrencyFields';
+import { resolveInvoiceCurrency } from '../utils/foreignCurrency.mjs';
+import { changeInvoiceCurrency, currencyMetadata, currencyPayload, currencyValidation, scannedCurrencyAmounts, updateCurrencyFields } from '../utils/foreignCurrencyForm.mjs';
 
 const Expenses = ({ openNew }) => {
     const [expenses, setExpenses] = useState([]);
@@ -53,10 +56,15 @@ const Expenses = ({ openNew }) => {
     const [savingNoReceiptReason, setSavingNoReceiptReason] = useState(false);
     const captureInputRef = useRef(null);
     const formFileRef = useRef(null);
+    const [captureLines, setCaptureLines] = useState([]);
+    const [detectCurrency, setDetectCurrency] = useState(true);
+    const captureSequence = useRef(0);
 
     const API_BASE = 'https://financehub-func-kemponline.azurewebsites.net/api';
 
     const [formData, setFormData] = useState({
+        ...currencyMetadata(),
+        invoiceDate: '',
         supplier: '',
         reference: '',
         category: '',
@@ -386,8 +394,10 @@ const Expenses = ({ openNew }) => {
     const selectSupplier = (supplier) => {
         setFormData({
             ...formData,
+            ...(!editingExpense && !formData.currencyExplicit && !formData.unsupportedScanCurrency ? { ...changeInvoiceCurrency(formData, resolveInvoiceCurrency(null, supplier.currency)), currencyExplicit: false } : {}),
             supplier: supplier.name
         });
+        setCaptureLines(lines => lines.map(line => line.currencyExplicit || line.unsupportedScanCurrency ? line : { ...line, ...changeInvoiceCurrency(line, resolveInvoiceCurrency(null, supplier.currency)), currencyExplicit: false }));
         setShowSupplierDropdown(false);
     };
 
@@ -397,7 +407,12 @@ const Expenses = ({ openNew }) => {
     };
 
     const resetForm = () => {
+        captureSequence.current += 1;
+        setCaptureScanning(false);
+        setCaptureLines([]);
         setFormData({
+            ...currencyMetadata(),
+            invoiceDate: '',
             supplier: '',
             reference: '',
             category: '',
@@ -426,10 +441,73 @@ const Expenses = ({ openNew }) => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        if (captureScanning) return;
+        const rows = captureLines.length ? captureLines : [formData];
+        const invalid = rows.map(currencyValidation).find(Boolean);
+        if (invalid) { showToast(invalid, 'error'); return; }
+        if (rows.some(row => (row.originalCurrency || 'GBP') !== 'GBP' && (!(Number(row.amountGross) > 0) || row.amountNet === '' || row.vatAmount === ''))) {
+            showToast('Apply conversion or enter the GBP net, UK VAT and gross amounts before saving.', 'error'); return;
+        }
         const normalizedDatePaid = normalizeDateForApi(formData.datePaid);
         const normalizedRecurringNextDate = formData.isRecurring
             ? normalizeDateForApi(formData.recurringNextDate)
             : null;
+
+        if (captureLines.length) {
+            if (captureLines.some(line => !line.description.trim() || !(Number(line.amountGross) > 0))) {
+                showToast('Each captured line needs a description and positive GBP gross amount.', 'error'); return;
+            }
+            if (formData.isDLA && !formData.dlaDirector) { showToast('Select a director.', 'error'); return; }
+            setProcessing(true);
+            setProcessingMessage('Saving invoice lines...');
+            let savedCount = 0;
+            try {
+                const headers = await getAuthHeaders();
+                for (const line of captureLines) {
+                    const payload = {
+                        ...formData, ...currencyPayload(line),
+                        amountNet: Number(line.amountNet), vatAmount: Number(line.vatAmount), amountGross: Number(line.amountGross),
+                        datePaid: normalizedDatePaid,
+                        ...((line.originalCurrency || 'GBP') !== 'GBP' && formData.invoiceDate ? { entryDate: new Date(formData.invoiceDate).toISOString() } : {}),
+                        taxYear: calculateTaxYear(normalizedDatePaid), financialYear: calculateFinancialYear(normalizedDatePaid),
+                        notes: [formData.notes, line.description].filter(Boolean).join('\n'),
+                        ctTag: formData.ctTag || getDefaultCtTag(formData.category)
+                    };
+                    delete payload.currencyExplicit;
+                    delete payload.invoiceDate;
+                    delete payload.conversionPending;
+                    delete payload.unsupportedScanCurrency;
+                    let saved;
+                    if (formData.isDLA) {
+                        const response = await fetch(`${API_BASE}/dla`, {
+                            method: 'POST', headers,
+                            body: JSON.stringify({ ...payload, director: formData.dlaDirector, direction: 'OwedToDirector', description: `${formData.supplier} - ${line.description}`, entryDate: payload.entryDate || new Date(normalizedDatePaid).toISOString(), datePaid: null })
+                        });
+                        if (!response.ok) throw new Error('Failed to create DLA invoice line.');
+                        saved = await response.json();
+                    } else {
+                        saved = await createExpense(payload);
+                    }
+                    savedCount += 1;
+                    setCaptureLines(previous => previous.slice(1));
+                    try {
+                        if (!saved?.id) throw new Error('No ID returned for receipt attachment.');
+                        for (const file of selectedFiles) {
+                            if (formData.isDLA) {
+                                const attachment = new FormData(); attachment.append('file', file);
+                                const response = await fetch(`${API_BASE}/dla/${saved.id}/upload`, { method: 'POST', headers: { Authorization: headers.Authorization }, body: attachment });
+                                if (!response.ok) throw new Error('Receipt upload failed.');
+                            } else await uploadReceipt(saved.id, file);
+                        }
+                    } catch (failure) { showToast(`Line saved, but receipt attachment failed: ${failure.message}`, 'warning'); }
+                }
+                resetForm();
+                showToast(`Saved ${savedCount} invoice lines.`, 'success');
+                await loadData();
+            } catch (failure) { showToast(`${failure.message} ${savedCount} lines saved; only unsaved lines remain.`, 'error'); }
+            finally { setProcessing(false); }
+            return;
+        }
 
         // ── Route isDLA saves straight into the DLA table ──────────────────
         if (formData.isDLA && !editingExpense) {
@@ -444,6 +522,7 @@ const Expenses = ({ openNew }) => {
                     ? `${formData.supplier} — ${formData.reference}`
                     : formData.supplier;
                 const dlaPayload = {
+                    ...currencyPayload(formData),
                     director: formData.dlaDirector,
                     direction: 'OwedToDirector',
                     description,
@@ -452,7 +531,7 @@ const Expenses = ({ openNew }) => {
                     amountNet: parseFloat(formData.amountNet) || 0,
                     vatAmount: parseFloat(formData.vatAmount) || 0,
                     amountGross: parseFloat(formData.amountGross) || 0,
-                    entryDate: new Date(normalizedDatePaid).toISOString(),
+                    entryDate: new Date((formData.originalCurrency || 'GBP') !== 'GBP' && formData.invoiceDate ? formData.invoiceDate : normalizedDatePaid).toISOString(),
                     datePaid: null,
                     paymentMethod: formData.paymentMethod,
                     notes: formData.notes,
@@ -501,7 +580,9 @@ const Expenses = ({ openNew }) => {
         try {
             const expenseData = {
                 ...formData,
+                ...currencyPayload(formData),
                 datePaid: normalizedDatePaid,
+                ...((formData.originalCurrency || 'GBP') !== 'GBP' && formData.invoiceDate ? { entryDate: new Date(formData.invoiceDate).toISOString() } : {}),
                 recurringFrequency: formData.isRecurring ? (formData.recurringFrequency || 'Monthly') : null,
                 recurringNextDate: formData.isRecurring
                     ? (normalizedRecurringNextDate || null)
@@ -512,6 +593,10 @@ const Expenses = ({ openNew }) => {
                 taxYear: calculateTaxYear(normalizedDatePaid),
                 financialYear: calculateFinancialYear(normalizedDatePaid)
             };
+            delete expenseData.currencyExplicit;
+            delete expenseData.invoiceDate;
+            delete expenseData.conversionPending;
+            delete expenseData.unsupportedScanCurrency;
 
             let expenseId;
             let expenseIdResolvedFromFallback = false;
@@ -578,19 +663,25 @@ const Expenses = ({ openNew }) => {
     };
 
     const handleEdit = (expense) => {
+        captureSequence.current += 1;
+        setCaptureScanning(false);
+        setCaptureLines([]);
         // Prefer datePaid (the field we write on save). Fall back to entryDate (legacy read field).
         const rawDate = expense.datePaid || expense.entryDate;
         const displayDate = rawDate ? new Date(rawDate).toISOString().split('T')[0] : '';
         setFormData({
+            ...currencyMetadata(expense),
+            currencyExplicit: true,
+            invoiceDate: expense.entryDate ? dateKey(expense.entryDate) : displayDate,
             supplier: expense.supplier || '',
             reference: expense.reference || '',
             category: expense.category || '',
             ctTag: expense.ctTag || getDefaultCtTag(expense.category),
             vatApplicability: expense.vatApplicability || 'Standard',
             vatIncluded: expense.vatIncluded !== false,
-            amountNet: expense.amountNet || '',
-            vatAmount: expense.vatAmount || '',
-            amountGross: expense.amountGross || '',
+            amountNet: expense.amountNet ?? '',
+            vatAmount: expense.vatAmount ?? '',
+            amountGross: expense.amountGross ?? '',
             datePaid: displayDate,
             paymentMethod: expense.paymentMethod || '',
             notes: expense.notes || '',
@@ -665,9 +756,14 @@ const Expenses = ({ openNew }) => {
     };
 
     const handleCancelEdit = () => {
+        captureSequence.current += 1;
+        setCaptureScanning(false);
+        setCaptureLines([]);
         setEditingExpense(null);
         setExistingAttachments([]);
         setFormData({
+            ...currencyMetadata(),
+            invoiceDate: '',
             supplier: '',
             reference: '',
             category: '',
@@ -692,12 +788,16 @@ const Expenses = ({ openNew }) => {
 
     // ── Receipt Quick Capture (drag & drop / photo) ───────────────────────────
     const openExpenseCapture = async (file) => {
+        const sequence = ++captureSequence.current;
+        setCaptureLines([]);
         // Pre-attach file so it uploads on save
         setSelectedFiles([file]);
         // Reset & open form
         setEditingExpense(null);
         setExistingAttachments([]);
         setFormData({
+            ...currencyMetadata(),
+            invoiceDate: '',
             supplier: '',
             reference: '',
             category: '',
@@ -721,32 +821,49 @@ const Expenses = ({ openNew }) => {
         setCaptureScanning(true);
         try {
             const scan = await analyzeInvoice(file);
+            if (sequence !== captureSequence.current) return;
             if (!scan.configured) {
                 setCaptureScanToast('noOcr');
             } else if (scan.found) {
-                // Sum amounts across all lines
-                const totalNet   = scan.lines?.reduce((s, l) => s + (l.amountNet   || 0), 0) || 0;
-                const totalVat   = scan.lines?.reduce((s, l) => s + (l.vatAmount   || 0), 0) || 0;
-                const totalGross = scan.lines?.reduce((s, l) => s + (l.amountGross || 0), 0) || 0;
+                const supplier = suppliers.find(item => item.name?.toLowerCase() === scan.vendor?.toLowerCase());
+                const scanCurrency = String(scan.currency || '').trim().toUpperCase();
+                const unsupported = !!scanCurrency && !['GBP', 'EUR', 'USD'].includes(scanCurrency);
+                const detected = !!scanCurrency && (detectCurrency || unsupported);
+                const invoice = detected ? scan : { ...scan, currency: null };
+                const lines = (scan.lines || []).map(line => ({
+                    ...currencyMetadata(), description: line.description || 'Invoice item',
+                    ...scannedCurrencyAmounts(invoice, {
+                        amountNet: line.originalAmountNet ?? line.amountNet ?? '',
+                        vatAmount: line.originalVatAmount ?? line.vatAmount ?? 0,
+                        amountGross: line.originalAmountGross ?? line.amountGross ?? ''
+                    }, supplier?.currency),
+                    currencyExplicit: detected
+                }));
+                setCaptureLines(lines);
                 setFormData(prev => ({
                     ...prev,
+                    ...scannedCurrencyAmounts(invoice, {
+                        amountNet: scan.originalAmountNet ?? scan.amountNet ?? '',
+                        vatAmount: scan.originalVatAmount ?? scan.vatAmount ?? '',
+                        amountGross: scan.originalAmountGross ?? scan.amountGross ?? ''
+                    }, supplier?.currency),
                     supplier:        scan.vendor      || prev.supplier,
                     reference:       scan.invoiceRef  || prev.reference,
                     datePaid:        normalizeDateForApi(scan.invoiceDate) || prev.datePaid,
-                    amountNet:       totalNet   > 0 ? totalNet.toFixed(2)   : prev.amountNet,
-                    vatAmount:       totalVat   > 0 ? totalVat.toFixed(2)   : prev.vatAmount,
-                    amountGross:     totalGross > 0 ? totalGross.toFixed(2) : prev.amountGross,
-                    vatApplicability: totalVat  > 0 ? 'Standard' : 'Zero'
+                    invoiceDate: normalizeDateForApi(scan.invoiceDate) || prev.datePaid,
+                    currencyExplicit: detected
                 }));
-                setCaptureScanToast('success');
+                setCaptureScanToast(unsupported ? 'error' : 'success');
+                if (unsupported) showToast(`Unsupported invoice currency ${scanCurrency}. Scan amounts were cleared; enter a supported conversion manually.`, 'error');
             } else {
                 setCaptureScanToast('error');
             }
         } catch (err) {
+            if (sequence !== captureSequence.current) return;
             console.warn('Receipt scan failed:', err.message);
             setCaptureScanToast('error');
         } finally {
-            setCaptureScanning(false);
+            if (sequence === captureSequence.current) setCaptureScanning(false);
         }
     };
 
@@ -913,11 +1030,15 @@ const Expenses = ({ openNew }) => {
         // Update the field being edited immediately without formatting
         setFormData({
             ...formData,
-            [field]: value
+            ...updateCurrencyFields(formData, { [field]: value }, { preserveAccounting: !!editingExpense })
         });
     };
 
     const handleAmountBlur = (field) => {
+        if ((formData.originalCurrency || 'GBP') !== 'GBP') {
+            setFormData(previous => ({ ...previous, [field]: previous[field] === '' ? '' : Number(previous[field]).toFixed(2) }));
+            return;
+        }
         // Only calculate and format when user finishes editing (onBlur)
         const value = formData[field];
         if (value === '' || value === '.' || isNaN(parseFloat(value))) {
@@ -1016,12 +1137,15 @@ const Expenses = ({ openNew }) => {
                             </span>
                         )}
                     </button>
-                    <button onClick={() => { setCaptureScanToast(null); setShowForm(true); }} className="btn-primary">
+                    <button onClick={() => { resetForm(); setCaptureScanToast(null); setShowForm(true); }} className="btn-primary">
                         + Add Expense
                     </button>
                 </div>
             </div>
 
+            <label className="form-group" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input type="checkbox" checked={detectCurrency} onChange={event => setDetectCurrency(event.target.checked)} /> Detect explicit invoice currency
+            </label>
             {/* Drag-and-drop zone */}
             <div
                 onDragOver={e => { e.preventDefault(); setCaptureDragOver(true); }}
@@ -1160,6 +1284,7 @@ const Expenses = ({ openNew }) => {
                                     onChange={(e) => {
                                         const newVatApplicability = e.target.value;
                                         setFormData({ ...formData, vatApplicability: newVatApplicability });
+                                        if (captureLines.length || (formData.originalCurrency || 'GBP') !== 'GBP') return;
                                         // Recalculate VAT with new applicability
                                         if (formData.amountGross && parseFloat(formData.amountGross) > 0) {
                                             const calculated = calculateVAT(true, formData.amountGross, newVatApplicability);
@@ -1189,14 +1314,26 @@ const Expenses = ({ openNew }) => {
                             </select>
                         </div>
 
-                        <div className="form-row" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+                        <label className="form-group">Invoice date<input type="date" value={formData.invoiceDate || ''} disabled={captureScanning} onChange={event => setFormData(previous => ({ ...previous, invoiceDate: event.target.value }))} /></label>
+                        {!captureLines.length && <ForeignCurrencyFields key={editingExpense?.id || 'new'} value={formData} onChange={change => setFormData(previous => ({ ...previous, ...change }))} invoiceDate={formData.invoiceDate} paymentDate={formData.datePaid} disabled={captureScanning} preserveAccounting={!!editingExpense} confirmed={editingExpense?.actualGbpPaid != null} />}
+                        {captureLines.map((line, index) => (
+                            <div key={index} style={{ borderBottom: '1px solid #ddd', padding: '0.75rem 0' }}>
+                                <label className="form-group">Line {index + 1} description<input value={line.description} required disabled={captureScanning} onChange={event => setCaptureLines(previous => previous.map((row, rowIndex) => rowIndex === index ? { ...row, description: event.target.value } : row))} /></label>
+                                <ForeignCurrencyFields value={line} onChange={change => setCaptureLines(previous => previous.map((row, rowIndex) => rowIndex === index ? { ...row, ...change } : row))} invoiceDate={formData.invoiceDate} paymentDate={formData.datePaid} disabled={captureScanning} />
+                                <div className="foreign-currency-fields" style={{ marginTop: '0.75rem' }}>
+                                    {['amountNet', 'vatAmount', 'amountGross'].map((field, fieldIndex) => <label key={field} className="form-group">{['Net (GBP)', 'UK VAT (GBP)', 'Gross (GBP)'][fieldIndex]}<input type="number" min="0" step="0.01" required disabled={captureScanning} value={line[field]} onChange={event => setCaptureLines(previous => previous.map((row, rowIndex) => rowIndex === index ? { ...row, ...updateCurrencyFields(row, { [field]: event.target.value }) } : row))} /></label>)}
+                                </div>
+                            </div>
+                        ))}
+                        {!captureLines.length && <div className="form-row" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))' }}>
                             <div className="form-group">
-                                <label>Amount (Pre-VAT)</label>
+                                <label>Net (GBP)</label>
                                 <input
                                     type="text"
                                     inputMode="decimal"
                                     pattern="[0-9]*\.?[0-9]*"
                                     value={formData.amountNet}
+                                    disabled={captureScanning}
                                     onChange={(e) => {
                                         const value = e.target.value;
                                         // Allow only numbers and decimal point
@@ -1210,22 +1347,24 @@ const Expenses = ({ openNew }) => {
                             </div>
 
                             <div className="form-group">
-                                <label>VAT Amount</label>
+                                <label>UK VAT (GBP)</label>
                                 <input
                                     type="text"
                                     value={formData.vatAmount}
-                                    readOnly
-                                    disabled
+                                    readOnly={(formData.originalCurrency || 'GBP') === 'GBP'}
+                                    disabled={captureScanning || (formData.originalCurrency || 'GBP') === 'GBP'}
+                                    onChange={event => handleAmountChange('vatAmount', event.target.value)}
                                 />
                             </div>
 
                             <div className="form-group">
-                                <label>Amount (Post-VAT)</label>
+                                <label>Gross (GBP)</label>
                                 <input
                                     type="text"
                                     inputMode="decimal"
                                     pattern="[0-9]*\.?[0-9]*"
                                     value={formData.amountGross}
+                                    disabled={captureScanning}
                                     onChange={(e) => {
                                         const value = e.target.value;
                                         // Allow only numbers and decimal point
@@ -1237,7 +1376,7 @@ const Expenses = ({ openNew }) => {
                                     placeholder="Enter post-VAT amount"
                                 />
                             </div>
-                        </div>
+                        </div>}
 
                         <div className="form-row">
                             <div className="form-group">
@@ -1479,7 +1618,7 @@ const Expenses = ({ openNew }) => {
                                     ✅ <strong>No-receipt reason on file</strong> — {editingExpense.noReceiptReason}
                                 </div>
                             )}
-                            <button type="submit" className="btn-primary" disabled={uploadingReceipt || processing}>
+                            <button type="submit" className="btn-primary" disabled={uploadingReceipt || processing || captureScanning}>
                                 {uploadingReceipt ? 'Uploading...' : processing ? 'Saving...' : formData.isDLA && !editingExpense ? '🏦 Save as DLA Entry' : editingExpense ? 'Update Expense' : 'Create Expense'}
                             </button>
                             {editingExpense && (
@@ -1736,6 +1875,7 @@ const Expenses = ({ openNew }) => {
                                     <div><span style={{ opacity: 0.6, fontSize: '0.8rem' }}>VAT</span><div>£{(viewExpense.vatAmount || 0).toFixed(2)}</div></div>
                                     <div><span style={{ opacity: 0.6, fontSize: '0.8rem' }}>Gross</span><div style={{ fontWeight: 700, fontSize: '1.05rem' }}>£{(viewExpense.amountGross || 0).toFixed(2)}</div></div>
                                 </div>
+                                <ForeignCurrencySummary value={viewExpense} />
                                 {viewExpense.ctTag !== 'NonCT' && (
                                     <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: 'rgba(22,163,74,0.08)', borderRadius: '6px', fontSize: '0.8rem', color: '#16a34a' }}>
                                         ✅ CT-allowable — reduces taxable profit by £{(viewExpense.amountNet || 0).toFixed(2)}

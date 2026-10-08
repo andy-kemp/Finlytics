@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function BankImportPreview({ preview, processing, onConfirm, onCancel }) {
+export default function BankImportPreview({ preview, processing, onConfirm, onCancel, onSettlement }) {
     const money = value => value == null ? 'Not supplied' : new Intl.NumberFormat('en-GB', { style: 'currency', currency: preview.currency || 'GBP' }).format(value);
     const { statement, newTransactions, duplicates, rejected, fileName, comparisons = [] } = preview;
     const canImport = newTransactions.length > 0 && rejected.length === 0 && statement.balanceErrors.length === 0;
@@ -34,6 +34,12 @@ export default function BankImportPreview({ preview, processing, onConfirm, onCa
                             <td>{duplicates.includes(transaction) ? 'Duplicate' : 'New'}</td>
                             <td style={{ minWidth: 180 }}>{transaction.category === 'Internal Transfer' ? 'Internal pot transfer' : comparison?.status || 'Not checked'}
                                 {comparison?.candidates?.map(candidate => <div key={candidate.key} style={{ fontSize: '0.8rem' }}>{candidate.label}</div>)}
+                                {comparison?.settlementCandidates?.map(candidate => <div key={candidate.key} style={{ marginTop: '0.5rem' }}>
+                                    <div>{candidate.label}: {money(candidate.actualGbp)} ({money(candidate.variance)} vs estimate)</div>
+                                    <button type="button" className="btn-secondary" disabled={processing || candidate.ambiguous || comparison.settlementCandidates.length !== 1 || !transaction.externalId || rejected.length > 0 || statement.balanceErrors.length > 0 || !onSettlement}
+                                        title={!onSettlement ? 'Settlement API permission not configured' : undefined}
+                                        onClick={() => onSettlement(index, candidate)}>Confirm GBP settlement</button>
+                                </div>)}
                             </td>
                         </tr>;
                     })}</tbody>

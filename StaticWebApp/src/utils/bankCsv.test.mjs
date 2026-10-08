@@ -73,5 +73,8 @@ test('supplied Monzo export reconstructs its closing balance', { skip: !process.
     assert.equal(statement.closing, 996.86);
     assert.equal(statement.calculatedClosing, statement.closing);
     assert.deepEqual(statement.balanceErrors, []);
+    const ubiquiti = transactions.find(transaction => transaction.amount === 80.25);
+    assert.equal(ubiquiti.originalCurrency, 'EUR');
+    assert.equal(ubiquiti.originalAmount, -92.4);
     console.log(JSON.stringify(statement));
 });

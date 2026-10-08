@@ -38,6 +38,11 @@ namespace FinanceHubFunctions.Functions
             {
                 try
                 {
+                    if (template.OriginalCurrency == "EUR" || template.OriginalCurrency == "USD")
+                    {
+                        _logger.LogWarning("Foreign recurring expense {Id} requires a fresh invoice-date exchange rate and confirmation; generation skipped", template.Id);
+                        continue;
+                    }
                     // Calculate the new entry date and financial year
                     var today = DateTime.UtcNow.Date;
                     var entryDate = template.RecurringNextDate?.Date ?? today;
@@ -58,6 +63,7 @@ namespace FinanceHubFunctions.Functions
                         AmountNet = template.AmountNet,
                         VATAmount = template.VATAmount,
                         AmountGross = template.AmountGross,
+                        OriginalCurrency = "GBP",
                         EntryDate = entryDate,
                         DatePaid = null,
                         PaymentMethod = template.PaymentMethod,

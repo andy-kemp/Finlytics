@@ -58,6 +58,8 @@ export function parseBankCsv(csvText, bankAccountId, currency = 'GBP') {
         }
         const rowCurrency = pick('currency');
         const balanceCurrency = pick('balance currency');
+        const originalCurrency = pick('local currency').toUpperCase();
+        const originalAmount = money(pick('local amount'));
         const reason = !transactionDate ? 'Invalid date' : amount == null ? 'Invalid amount' : !description ? 'Missing description'
             : rowCurrency && rowCurrency !== currency ? `Currency ${rowCurrency} does not match ${currency}`
                 : balanceCurrency && balanceCurrency !== currency ? `Balance currency ${balanceCurrency} does not match ${currency}` : null;
@@ -71,7 +73,9 @@ export function parseBankCsv(csvText, bankAccountId, currency = 'GBP') {
             category: categoryFor({ type, name, reference, category: pick('category'), description, amount }),
             direction: amount < 0 ? 'Out' : 'In', balance: money(pick('balance', 'running balance')),
             source: 'CSV', monzoTransactionId: /^mm_/.test(externalId) ? externalId : null,
-            monzoMerchantName: name || null, monzoNotes: notes || null
+            monzoMerchantName: name || null, monzoNotes: notes || null,
+            originalCurrency: ['GBP', 'EUR', 'USD'].includes(originalCurrency) && originalAmount != null ? originalCurrency : null,
+            originalAmount: ['GBP', 'EUR', 'USD'].includes(originalCurrency) && originalAmount != null ? originalAmount : null
         });
     });
     return { transactions, rejected };

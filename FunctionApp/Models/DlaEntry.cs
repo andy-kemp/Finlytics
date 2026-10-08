@@ -2,7 +2,7 @@ using System;
 
 namespace FinanceHubFunctions.Models
 {
-    public class DlaEntry
+    public class DlaEntry : IForeignCurrencyRecord
     {
         public int Id { get; set; }
         public string DlaId { get; set; } = string.Empty; // DLA-YYYY-NNNN format
@@ -13,6 +13,17 @@ namespace FinanceHubFunctions.Models
         public decimal AmountNet { get; set; }
         public decimal VatAmount { get; set; }
         public decimal AmountGross { get; set; }
+        public string? OriginalCurrency { get; set; }
+        public decimal? OriginalAmountNet { get; set; }
+        public decimal? OriginalVatAmount { get; set; }
+        public decimal? OriginalAmountGross { get; set; }
+        public decimal? ExchangeRateToGbp { get; set; }
+        public DateTime? ExchangeRateDate { get; set; }
+        public string? ExchangeRateSource { get; set; }
+        public decimal? EstimatedGbpGross { get; set; }
+        public decimal? ActualGbpPaid { get; set; }
+        public DateTime? SettlementDate { get; set; }
+        public int? SettlementBankTransactionId { get; set; }
         public string? Category { get; set; }
         public string? CtTag { get; set; } // Revenue | Capital | NonCT
         public bool IsStartupCost { get; set; } = false;

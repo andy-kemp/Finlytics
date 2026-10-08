@@ -184,19 +184,23 @@ namespace FinanceHubFunctions.Functions
                 var accessToken = AuthHelper.GetAccessToken(req);
                 
                 var requestBody = await req.ReadAsStringAsync();
-                var expense = JsonSerializer.Deserialize<Expense>(requestBody, new JsonSerializerOptions 
-                { 
-                    PropertyNameCaseInsensitive = true 
-                });
-
-                if (expense == null)
+                if (!ForeignCurrencyHelper.TryRead<Expense>(requestBody, out var expense, out var parseError))
                 {
                     var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                    await badResponse.WriteAsJsonAsync(new { error = "Invalid expense data" });
+                    await badResponse.WriteAsJsonAsync(new { error = parseError }, HttpStatusCode.BadRequest);
                     return badResponse;
                 }
 
                 // Validate required fields
+                var currencyError = ForeignCurrencyHelper.Validate(expense!, isNew: true);
+                if (_expenseRepository == null && expense!.OriginalCurrency != "GBP")
+                    currencyError ??= "Foreign currency requires SQL persistence";
+                if (currencyError != null)
+                {
+                    var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+                    await badResponse.WriteAsJsonAsync(new { error = currencyError }, HttpStatusCode.BadRequest);
+                    return badResponse;
+                }
                 if (string.IsNullOrWhiteSpace(expense.Supplier) && string.IsNullOrWhiteSpace(expense.SupplierFreeText))
                 {
                     var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
@@ -443,15 +447,10 @@ namespace FinanceHubFunctions.Functions
                 var requestBody = await req.ReadAsStringAsync();
                 _logger.LogInformation($"UpdateExpense: Received body for id={id}: {requestBody?.Substring(0, Math.Min(500, requestBody?.Length ?? 0))}");
 
-                var expense = JsonSerializer.Deserialize<Expense>(requestBody, new JsonSerializerOptions 
-                { 
-                    PropertyNameCaseInsensitive = true 
-                });
-
-                if (expense == null)
+                if (!ForeignCurrencyHelper.TryRead<Expense>(requestBody, out var expense, out var parseError))
                 {
                     var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                    await badResponse.WriteAsJsonAsync(new { error = "Invalid expense data" });
+                    await badResponse.WriteAsJsonAsync(new { error = parseError }, HttpStatusCode.BadRequest);
                     return badResponse;
                 }
 
@@ -459,7 +458,12 @@ namespace FinanceHubFunctions.Functions
 
                 if (_dbContext != null)
                 {
+                    return await _dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+                    {
+                    _dbContext.ChangeTracker.Clear();
+                    ForeignCurrencyHelper.TryRead<Expense>(requestBody, out expense, out _);
                     // ── Database path ──────────────────────────────────────────────────
+                    await using var settlementTransaction = await _dbContext.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
                     // NOTE: Do NOT call SharePoint here - the supplier is already stored
                     // in the DB Expense.Supplier field and no SharePoint lookup is needed.
                     var existing = await _dbContext.Expenses.FindAsync(id);
@@ -472,6 +476,16 @@ namespace FinanceHubFunctions.Functions
                     }
 
                     _logger.LogInformation($"UpdateExpense: Updating expense {id}, old DatePaid={existing.DatePaid}, new DatePaid={expense.DatePaid}");
+
+                    ForeignCurrencyHelper.PreserveOmitted(expense!, existing, requestBody!);
+                    var currencyError = ForeignCurrencyHelper.Validate(expense!, existing: existing);
+                    if (currencyError != null)
+                    {
+                        var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+                        await badResponse.WriteAsJsonAsync(new { error = currencyError }, HttpStatusCode.BadRequest);
+                        return badResponse;
+                    }
+                    ForeignCurrencyHelper.Copy(expense!, existing);
 
                     // Get company settings for FY recalculation
                     CompanySettings? companySettings = null;
@@ -487,11 +501,11 @@ namespace FinanceHubFunctions.Functions
                     existing.VATApplicability = expense.VATApplicability;
                     existing.VATIncluded      = expense.VATIncluded;
                     existing.VATRate          = expense.VATRate;
-                    existing.AmountNet        = expense.AmountNet;
-                    existing.VATAmount        = expense.VATAmount;
-                    existing.AmountGross      = expense.AmountGross;
-                    existing.DatePaid         = effectiveDate;
-                    existing.EntryDate        = effectiveDate; // always keep both in sync
+                    if (ForeignCurrencyHelper.HasProperty(requestBody!, "amountNet")) existing.AmountNet = expense.AmountNet;
+                    if (ForeignCurrencyHelper.HasProperty(requestBody!, "vatAmount")) existing.VATAmount = expense.VATAmount;
+                    if (ForeignCurrencyHelper.HasProperty(requestBody!, "amountGross")) existing.AmountGross = expense.AmountGross;
+                    existing.DatePaid         = expense.OriginalCurrency == "EUR" || expense.OriginalCurrency == "USD" ? expense.DatePaid : effectiveDate;
+                    existing.EntryDate        = expense.OriginalCurrency == "EUR" || expense.OriginalCurrency == "USD" ? expense.EntryDate : effectiveDate;
                     existing.PaymentMethod    = expense.PaymentMethod;
                     existing.Notes            = expense.Notes;
                     existing.TaxYear          = CalculateTaxYear(effectiveDate);
@@ -502,11 +516,23 @@ namespace FinanceHubFunctions.Functions
                                                     : expense.CtTag;
 
                     await _dbContext.SaveChangesAsync();
+                    await settlementTransaction.CommitAsync();
                     _logger.LogInformation($"UpdateExpense: Saved successfully. New DatePaid={existing.DatePaid}, EntryDate={existing.EntryDate}");
+                    var success = req.CreateResponse(HttpStatusCode.OK);
+                    await success.WriteAsJsonAsync(new { success = true });
+                    return success;
+                    });
                 }
                 else
                 {
                     // SharePoint fallback path
+                    var currencyError = ForeignCurrencyHelper.Validate(expense!);
+                    if (currencyError != null || (expense!.OriginalCurrency != null && expense.OriginalCurrency != "GBP"))
+                    {
+                        var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+                        await badResponse.WriteAsJsonAsync(new { error = currencyError ?? "Foreign currency requires SQL persistence" }, HttpStatusCode.BadRequest);
+                        return badResponse;
+                    }
                     var accessToken = AuthHelper.GetAccessToken(req);
                     string? supplierLookupId = null;
                     if (!string.IsNullOrEmpty(expense.Supplier))

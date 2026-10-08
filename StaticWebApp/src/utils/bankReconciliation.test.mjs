@@ -1,3 +1,12 @@
+test('foreign settlement requires original amount, merchant and date evidence, not GBP estimate equality', () => {
+    const expense = { id: 5, supplier: 'GitHub', originalCurrency: 'USD', originalAmountGross: 100.23, estimatedGbpGross: 78, amountGross: 78, datePaid: '2026-09-22' };
+    const bank = { direction: 'Out', amount: 75, description: 'GitHub card payment', originalCurrency: 'USD', originalAmount: -100.23, transactionDate: '2026-09-22' };
+    const result = compareBankToApp([bank], { expenses: [expense] });
+    assert.equal(result.comparisons[0].settlementCandidates[0].actualGbp, 75);
+    assert.equal(compareBankToApp([{ ...bank, description: 'Different merchant' }], { expenses: [expense] }).comparisons[0].settlementCandidates.length, 0);
+    const shared = compareBankToApp([bank, bank], { expenses: [expense] });
+    assert.equal(shared.comparisons[0].settlementCandidates[0].ambiguous, true);
+});
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { compareBankToApp } from './bankReconciliation.mjs';

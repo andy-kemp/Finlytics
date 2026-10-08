@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { getAuthHeaders, getCompanySettings, getDlaEntries, getDlaPayments, getAllDlaPayments, getCompanyDocuments, uploadDocument, deleteDocument, downloadDocument, analyzeInvoice, getSuppliers, createSupplier, generateCode, getTrivialBenefitSummary, getDlaDeclaration, createDlaDeclaration, finaliseDlaDeclaration, voidDlaDeclaration, getDlaDeclarationPdfUrl, patchDlaNoReceiptReason } from '../services/apiService';
 import { calculateDlaCompliance } from '../services/dlaRules';
 import Toast from './Toast';
 import { useToast } from '../hooks/useToast';
 import TrivialBenefitModal from './TrivialBenefitModal';
 import ConfirmDeleteModal from './ConfirmDeleteModal';
+import ForeignCurrencyFields, { ForeignCurrencySummary } from './ForeignCurrencyFields';
+import { resolveInvoiceCurrency } from '../utils/foreignCurrency.mjs';
+import { changeInvoiceCurrency, currencyMetadata, currencyPayload, currencyValidation, scannedCurrencyAmounts, updateCurrencyFields } from '../utils/foreignCurrencyForm.mjs';
 
 const DLA = ({ openNew }) => {
     const { toast, showToast, clearToast } = useToast();
@@ -15,6 +18,9 @@ const DLA = ({ openNew }) => {
     const [categories, setCategories] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState([]);
     const [companySettings, setCompanySettings] = useState(null);
+    const [suppliers, setSuppliers] = useState([]);
+    const [detectCurrency, setDetectCurrency] = useState(true);
+    const captureSequence = useRef(0);
     const [loading, setLoading] = useState(true);
     const [processing, setProcessing] = useState(false);
     const [showForm, setShowForm] = useState(false);
@@ -133,7 +139,7 @@ const DLA = ({ openNew }) => {
         category: ''
     });
     const [captureLines, setCaptureLines] = useState([
-        { description: '', amountNet: '', vatAmount: '0.00', amountGross: '', vatExempt: false }
+        { ...currencyMetadata(), description: '', amountNet: '', vatAmount: '0.00', amountGross: '', vatExempt: false }
     ]);
 
     const DLA_DOCUMENT_TYPES = [
@@ -151,6 +157,7 @@ const DLA = ({ openNew }) => {
     };
 
     const [formData, setFormData] = useState({
+        ...currencyMetadata(),
         director: '',
         direction: 'OwedToDirector',
         description: '',
@@ -186,14 +193,16 @@ const DLA = ({ openNew }) => {
     const loadData = async () => {
         try {
             setLoading(true);
-            const [dlaData, settingsData, categoriesData, paymentMethodsData, documentsData] = await Promise.all([
+            const [dlaData, settingsData, categoriesData, paymentMethodsData, documentsData, suppliersData] = await Promise.all([
                 getDlaEntries().catch(() => []),
                 getCompanySettings().catch(() => null),
                 fetch(`${API_BASE_URL}/categories`).then(r => r.json()).catch(() => []),
                 fetch(`${API_BASE_URL}/paymentmethods`).then(r => r.json()).catch(() => []),
-                getCompanyDocuments().catch(() => [])
+                getCompanyDocuments().catch(() => []),
+                getSuppliers().catch(() => [])
             ]);
 
+            setSuppliers(Array.isArray(suppliersData) ? suppliersData : []);
             setDlaEntries(Array.isArray(dlaData) ? dlaData : []);
             setCategories(Array.isArray(categoriesData) ? categoriesData : []);
             setPaymentMethods(Array.isArray(paymentMethodsData) ? paymentMethodsData : []);
@@ -332,7 +341,11 @@ const DLA = ({ openNew }) => {
                 nextValue = checked;
             }
             
-            const updated = { ...prev, [name]: nextValue };
+            const updated = { ...prev, ...updateCurrencyFields(prev, { [name]: nextValue }, { preserveAccounting: !!editingEntry }) };
+            if ((updated.originalCurrency || 'GBP') !== 'GBP' && [...moneyFields, 'vatExempt'].includes(name)) {
+                if (name === 'vatExempt' && checked) updated.vatAmount = '0.00';
+                return updated;
+            }
             
             // --- Smart amount calculations ---
             if (name === 'vatExempt') {
@@ -411,6 +424,7 @@ const DLA = ({ openNew }) => {
         setEditingEntry(null);
         const newDate = new Date().toISOString().split('T')[0];
         const defaultForm = {
+            ...currencyMetadata(),
             director: '',
             direction: 'OwedToDirector',
             description: '',
@@ -443,6 +457,7 @@ const DLA = ({ openNew }) => {
     const handleEditEntry = async (entry) => {
         setEditingEntry(entry);
         const editForm = {
+            ...currencyMetadata(entry),
             director: entry.director || '',
             direction: entry.direction || 'OwedToDirector',
             description: entry.description || '',
@@ -477,11 +492,17 @@ const DLA = ({ openNew }) => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        const invalid = currencyValidation(formData);
+        if (invalid) { showToast(invalid, 'error'); return; }
+        if ((formData.originalCurrency || 'GBP') !== 'GBP' && (!(Number(formData.amountGross) > 0) || formData.amountNet === '' || formData.vatAmount === '')) {
+            showToast('Apply conversion or enter GBP net, UK VAT and gross before saving.', 'error'); return;
+        }
         setProcessing(true);
 
         try {
             const entryData = {
                 ...formData,
+                ...currencyPayload(formData),
                 director: formData.director,
                 description: formData.description,
                 amountNet: parseFloat(formData.amountNet) || 0,
@@ -492,6 +513,9 @@ const DLA = ({ openNew }) => {
                 taxYear: calculateTaxYear(formData.entryDate),
                 financialYear: calculateFinancialYear(formData.entryDate)
             };
+            delete entryData.currencyExplicit;
+            delete entryData.conversionPending;
+            delete entryData.unsupportedScanCurrency;
 
             let savedEntry;
             if (editingEntry) {
@@ -528,6 +552,7 @@ const DLA = ({ openNew }) => {
             setEditingEntry(null);
             setSelectedFiles([]);
             setFormData({
+                ...currencyMetadata(),
                 director: '',
                 direction: 'OwedToDirector',
                 description: '',
@@ -1138,6 +1163,7 @@ const DLA = ({ openNew }) => {
     };
 
     const openInvoiceCapture = async (file) => {
+        const sequence = ++captureSequence.current;
         setCaptureInvoiceFile(file);
         setCaptureInvoiceUrl(URL.createObjectURL(file));
         setCaptureInvoiceMime(file.type);
@@ -1149,7 +1175,7 @@ const DLA = ({ openNew }) => {
             direction: 'OwedToDirector',
             category: ''
         });
-        setCaptureLines([{ description: '', amountNet: '', vatAmount: '0.00', amountGross: '', vatExempt: false }]);
+        setCaptureLines([{ ...currencyMetadata(), description: '', amountNet: '', vatAmount: '0.00', amountGross: '', vatExempt: false }]);
         setCaptureScanToast(null);
         setShowInvoiceCapture(true);
 
@@ -1157,6 +1183,7 @@ const DLA = ({ openNew }) => {
         setCaptureScanning(true);
         try {
             const scan = await analyzeInvoice(file);
+            if (sequence !== captureSequence.current) return;
             if (!scan.configured) {
                 setCaptureScanToast('noOcr');
             } else if (scan.found) {
@@ -1168,29 +1195,40 @@ const DLA = ({ openNew }) => {
                     invoiceRef:  scan.invoiceRef  || prev.invoiceRef
                 }));
                 // Pre-fill lines
-                if (scan.lines && scan.lines.length > 0) {
-                    setCaptureLines(scan.lines.map(l => ({
+                const scanCurrency = String(scan.currency || '').trim().toUpperCase();
+                const unsupported = !!scanCurrency && !['GBP', 'EUR', 'USD'].includes(scanCurrency);
+                if (unsupported || (scan.lines && scan.lines.length > 0)) {
+                    const supplier = suppliers.find(item => item.name?.toLowerCase() === scan.vendor?.toLowerCase());
+                    const detected = !!scanCurrency && (detectCurrency || unsupported);
+                    const invoice = detected ? scan : { ...scan, currency: null };
+                    setCaptureLines((scan.lines?.length ? scan.lines : [{}]).map(l => ({
+                        ...currencyMetadata(),
                         description: l.description || '',
-                        amountNet:   l.amountNet   ? l.amountNet.toFixed(2)   : '',
-                        vatAmount:   l.vatAmount   ? l.vatAmount.toFixed(2)   : '0.00',
-                        amountGross: l.amountGross ? l.amountGross.toFixed(2) : '',
+                        ...scannedCurrencyAmounts(invoice, {
+                            amountNet: l.originalAmountNet ?? l.amountNet ?? '',
+                            vatAmount: l.originalVatAmount ?? l.vatAmount ?? 0,
+                            amountGross: l.originalAmountGross ?? l.amountGross ?? ''
+                        }, supplier?.currency),
+                        currencyExplicit: detected,
                         vatExempt:   (l.vatAmount || 0) === 0
                     })));
                 }
-                setCaptureScanToast('success');
+                setCaptureScanToast(unsupported ? 'error' : 'success');
+                if (unsupported) showToast(`Unsupported invoice currency ${scanCurrency}. Scan amounts were cleared; enter a supported conversion manually.`, 'error');
             } else {
                 setCaptureScanToast('error');
             }
         } catch (err) {
+            if (sequence !== captureSequence.current) return;
             console.warn('Invoice scan failed:', err.message);
             setCaptureScanToast('error');
         } finally {
-            setCaptureScanning(false);
+            if (sequence === captureSequence.current) setCaptureScanning(false);
         }
     };
 
     const addCaptureLine = () => {
-        setCaptureLines(prev => [...prev, { description: '', amountNet: '', vatAmount: '0.00', amountGross: '', vatExempt: false }]);
+        setCaptureLines(prev => [...prev, { ...currencyMetadata(), originalCurrency: prev[0]?.originalCurrency || 'GBP', description: '', amountNet: '', vatAmount: '', amountGross: '', vatExempt: false }]);
     };
 
     const removeCaptureLine = (idx) => {
@@ -1200,7 +1238,11 @@ const DLA = ({ openNew }) => {
     const updateCaptureLine = (idx, field, value) => {
         setCaptureLines(prev => prev.map((line, i) => {
             if (i !== idx) return line;
-            const next = { ...line, [field]: value };
+            const next = { ...line, ...updateCurrencyFields(line, { [field]: value }) };
+            if ((next.originalCurrency || 'GBP') !== 'GBP') {
+                if (field === 'vatExempt' && value) next.vatAmount = '0.00';
+                return next;
+            }
             if (field === 'vatExempt') {
                 if (value) {
                     const gross = parseFloat(next.amountGross) || parseFloat(next.amountNet) || 0;
@@ -1245,7 +1287,12 @@ const DLA = ({ openNew }) => {
     };
 
     const submitInvoiceCapture = async () => {
-        if (!captureInvoiceFile) return;
+        if (!captureInvoiceFile || captureScanning) return;
+        const invalid = captureLines.map(currencyValidation).find(Boolean);
+        if (invalid) { showToast(invalid, 'error'); return; }
+        if (captureLines.some(line => !line.description.trim() || !(Number(line.amountGross) > 0) || ((line.originalCurrency || 'GBP') !== 'GBP' && (line.amountNet === '' || line.vatAmount === '')))) {
+            showToast('Every line needs a description and GBP amounts. Apply conversion or enter GBP amounts before saving.', 'error'); return;
+        }
         const validLines = captureLines.filter(l => l.description && (parseFloat(l.amountGross) || 0) > 0);
         if (validLines.length === 0) { showToast('Please add at least one line item with a description and amount.', 'error'); return; }
         if (!captureHeader.director) { showToast('Please select a director.', 'error'); return; }
@@ -1263,6 +1310,7 @@ const DLA = ({ openNew }) => {
             const createdIds = [];
             for (const line of validLines) {
                 const entryData = {
+                    ...currencyPayload(line),
                     director: captureHeader.director,
                     direction: captureHeader.direction,
                     description: `${vendorPrefix}${line.description}${invoiceRef}`,
@@ -1340,7 +1388,7 @@ const DLA = ({ openNew }) => {
                             payeeType: 'Supplier',
                             isActive: true,
                             category: captureHeader.category || '',
-                            currency: 'GBP',
+                            currency: validLines[0]?.originalCurrency || 'GBP',
                             defaultVATRate: 20
                         });
                         showToast(`"${vendorName}" added to Payees list`, 'success');
@@ -1654,6 +1702,9 @@ const DLA = ({ openNew }) => {
             </div>
 
             {/* Drag & drop zone */}
+            <label className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="checkbox" checked={detectCurrency} onChange={event => setDetectCurrency(event.target.checked)} /> Detect explicit invoice currency
+            </label>
             <div
                 onDragOver={e => { e.preventDefault(); setCaptureDragOver(true); }}
                 onDragLeave={() => setCaptureDragOver(false)}
@@ -2083,8 +2134,9 @@ const DLA = ({ openNew }) => {
                                     </select>
                                 </div>
 
+                                <ForeignCurrencyFields key={editingEntry?.id || 'new'} value={formData} onChange={change => setFormData(previous => ({ ...previous, ...change }))} invoiceDate={formData.entryDate} paymentDate={formData.datePaid} preserveAccounting={!!editingEntry} confirmed={editingEntry?.actualGbpPaid != null} />
                                 <div className="form-group">
-                                    <label>Amount (Net) *</label>
+                                    <label>Net (GBP) *</label>
                                     <input
                                         type="text"
                                         inputMode="decimal"
@@ -2100,8 +2152,8 @@ const DLA = ({ openNew }) => {
 
                                 <div className="form-group">
                                     <label>
-                                        VAT Amount
-                                        {!formData.vatExempt && formData.amountNet && (
+                                        UK VAT (GBP)
+                                        {(formData.originalCurrency || 'GBP') === 'GBP' && !formData.vatExempt && formData.amountNet && (
                                             <span className="vat-hint"> (20% = auto-calculated)</span>
                                         )}
                                     </label>
@@ -2132,7 +2184,7 @@ const DLA = ({ openNew }) => {
                                 </div>
 
                                 <div className="form-group">
-                                    <label>Amount (Gross) *</label>
+                                    <label>Gross (GBP) *</label>
                                     <input
                                         type="text"
                                         inputMode="decimal"
@@ -2836,7 +2888,7 @@ const DLA = ({ openNew }) => {
                             </div>
                         )}
 
-                        <div style={{ display: 'flex', gap: '1rem', flex: 1, overflow: 'hidden', padding: '1rem' }}>
+                        <div className="currency-capture-layout" style={{ display: 'flex', gap: '1rem', flex: 1, overflow: 'hidden', padding: '1rem' }}>
 
                             {/* Left — invoice preview */}
                             <div style={{ flex: '0 0 42%', display: 'flex', flexDirection: 'column', gap: '0.75rem', minHeight: 0 }}>
@@ -2885,15 +2937,21 @@ const DLA = ({ openNew }) => {
                                     </div>
                                     <div className="form-group">
                                         <label>Vendor / Supplier</label>
-                                        <input type="text" placeholder="e.g. Amazon, Apple" value={captureHeader.vendor} onChange={e => setCaptureHeader(h => ({...h, vendor: e.target.value}))} />
+                                        <input type="text" list="dla-currency-suppliers" placeholder="e.g. Amazon, Apple" value={captureHeader.vendor} disabled={captureScanning} onChange={e => {
+                                            const vendor = e.target.value;
+                                            setCaptureHeader(h => ({ ...h, vendor }));
+                                            const supplier = suppliers.find(item => item.name?.toLowerCase() === vendor.toLowerCase());
+                                            if (supplier) setCaptureLines(previous => previous.map(line => line.currencyExplicit || line.unsupportedScanCurrency ? line : { ...line, ...changeInvoiceCurrency(line, resolveInvoiceCurrency(null, supplier.currency)), currencyExplicit: false }));
+                                        }} />
+                                        <datalist id="dla-currency-suppliers">{suppliers.map(supplier => <option key={supplier.id || supplier.name} value={supplier.name} />)}</datalist>
                                     </div>
                                     <div className="form-group">
                                         <label>Invoice Date *</label>
-                                        <input type="date" value={captureHeader.invoiceDate} onChange={e => setCaptureHeader(h => ({...h, invoiceDate: e.target.value}))} />
+                                        <input type="date" value={captureHeader.invoiceDate} disabled={captureScanning} onChange={e => setCaptureHeader(h => ({...h, invoiceDate: e.target.value}))} />
                                     </div>
                                     <div className="form-group">
                                         <label>Invoice / Order Ref</label>
-                                        <input type="text" placeholder="e.g. INV-12345" value={captureHeader.invoiceRef} onChange={e => setCaptureHeader(h => ({...h, invoiceRef: e.target.value}))} />
+                                        <input type="text" placeholder="e.g. INV-12345" value={captureHeader.invoiceRef} disabled={captureScanning} onChange={e => setCaptureHeader(h => ({...h, invoiceRef: e.target.value}))} />
                                     </div>
                                     <div className="form-group">
                                         <label>Category</label>
@@ -2908,33 +2966,34 @@ const DLA = ({ openNew }) => {
                                 <div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                                         <h4 style={{ margin: 0, fontSize: '0.9rem' }}>Line Items <span style={{ opacity: 0.5, fontWeight: 400 }}>(each becomes a DLA entry linked to this invoice)</span></h4>
-                                        <button className="btn-secondary" style={{ fontSize: '0.78rem', padding: '0.2rem 0.6rem' }} onClick={addCaptureLine} type="button">+ Add Line</button>
+                                        <button className="btn-secondary" style={{ fontSize: '0.78rem', padding: '0.2rem 0.6rem' }} onClick={addCaptureLine} type="button" disabled={captureScanning}>+ Add Line</button>
                                     </div>
 
                                     {captureLines.map((line, idx) => (
-                                        <div key={idx} style={{ background: 'rgba(0,0,0,0.04)', borderRadius: '6px', padding: '0.6rem', marginBottom: '0.4rem', display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: '0.4rem', alignItems: 'end' }}>
+                                        <div key={idx} className="currency-capture-line" style={{ borderBottom: '1px solid #ddd', padding: '0.6rem', marginBottom: '0.4rem', display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: '0.4rem', alignItems: 'end' }}>
+                                            <ForeignCurrencyFields value={line} onChange={change => setCaptureLines(previous => previous.map((row, rowIndex) => rowIndex === idx ? { ...row, ...change } : row))} invoiceDate={captureHeader.invoiceDate} paymentDate={line.settlementDate} disabled={captureScanning || captureSubmitting} />
                                             <div className="form-group" style={{ margin: 0 }}>
                                                 <label style={{ fontSize: '0.73rem' }}>Description *</label>
-                                                <input type="text" placeholder="e.g. USB-C cable" value={line.description} onChange={e => updateCaptureLine(idx, 'description', e.target.value)} />
+                                                <input type="text" placeholder="e.g. USB-C cable" value={line.description} disabled={captureScanning || captureSubmitting} onChange={e => updateCaptureLine(idx, 'description', e.target.value)} />
                                             </div>
                                             <div className="form-group" style={{ margin: 0 }}>
                                                 <label style={{ fontSize: '0.73rem' }}>Net £</label>
-                                                <input type="text" inputMode="decimal" placeholder="0.00" value={line.amountNet} onChange={e => updateCaptureLine(idx, 'amountNet', e.target.value)} onBlur={() => blurCaptureLine(idx, 'amountNet')} />
+                                                <input type="text" inputMode="decimal" placeholder="0.00" value={line.amountNet} disabled={captureScanning || captureSubmitting} onChange={e => updateCaptureLine(idx, 'amountNet', e.target.value)} onBlur={() => blurCaptureLine(idx, 'amountNet')} />
                                             </div>
                                             <div className="form-group" style={{ margin: 0 }}>
                                                 <label style={{ fontSize: '0.73rem' }}>VAT £ {line.vatExempt && <span style={{color:'#9ca3af'}}>(exempt)</span>}</label>
-                                                <input type="text" inputMode="decimal" placeholder="0.00" value={line.vatAmount} onChange={e => updateCaptureLine(idx, 'vatAmount', e.target.value)} onBlur={() => blurCaptureLine(idx, 'vatAmount')} disabled={line.vatExempt} style={line.vatExempt ? {opacity:0.4} : {}} />
+                                                <input type="text" inputMode="decimal" placeholder="0.00" value={line.vatAmount} onChange={e => updateCaptureLine(idx, 'vatAmount', e.target.value)} onBlur={() => blurCaptureLine(idx, 'vatAmount')} disabled={captureScanning || captureSubmitting || line.vatExempt} style={line.vatExempt ? {opacity:0.4} : {}} />
                                             </div>
                                             <div className="form-group" style={{ margin: 0 }}>
                                                 <label style={{ fontSize: '0.73rem' }}>Gross £</label>
-                                                <input type="text" inputMode="decimal" placeholder="0.00" value={line.amountGross} onChange={e => updateCaptureLine(idx, 'amountGross', e.target.value)} onBlur={() => blurCaptureLine(idx, 'amountGross')} />
+                                                <input type="text" inputMode="decimal" placeholder="0.00" value={line.amountGross} disabled={captureScanning || captureSubmitting} onChange={e => updateCaptureLine(idx, 'amountGross', e.target.value)} onBlur={() => blurCaptureLine(idx, 'amountGross')} />
                                             </div>
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
                                                 <label style={{ fontSize: '0.65rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                                    <input type="checkbox" checked={line.vatExempt} onChange={e => updateCaptureLine(idx, 'vatExempt', e.target.checked)} style={{ cursor: 'pointer' }} /> 0%
+                                                    <input type="checkbox" checked={line.vatExempt} disabled={captureScanning || captureSubmitting} onChange={e => updateCaptureLine(idx, 'vatExempt', e.target.checked)} style={{ cursor: 'pointer' }} /> 0%
                                                 </label>
                                                 {captureLines.length > 1 && (
-                                                    <button onClick={() => removeCaptureLine(idx)} className="btn-icon" style={{ fontSize: '12px', padding: '2px 4px' }} type="button" title="Remove line">✕</button>
+                                                    <button onClick={() => removeCaptureLine(idx)} disabled={captureScanning || captureSubmitting} className="btn-icon" style={{ fontSize: '12px', padding: '2px 4px' }} type="button" title="Remove line">✕</button>
                                                 )}
                                             </div>
                                         </div>
@@ -2958,7 +3017,7 @@ const DLA = ({ openNew }) => {
                             </div>
                             <div style={{ display: 'flex', gap: '0.5rem' }}>
                                 <button className="btn-secondary" onClick={() => setShowInvoiceCapture(false)} disabled={captureSubmitting}>Cancel</button>
-                                <button className="btn-primary" onClick={submitInvoiceCapture} disabled={captureSubmitting || !captureInvoiceFile}>
+                                <button className="btn-primary" onClick={submitInvoiceCapture} disabled={captureSubmitting || captureScanning || !captureInvoiceFile}>
                                     {captureUploading ? '⬆ Uploading...' : captureSubmitting ? '⚙ Creating entries...' : `✅ Create ${captureLines.filter(l => l.description && parseFloat(l.amountGross) > 0).length} DLA Entr${captureLines.filter(l => l.description && parseFloat(l.amountGross) > 0).length === 1 ? 'y' : 'ies'}`}
                                 </button>
                             </div>
@@ -3011,6 +3070,7 @@ const DLA = ({ openNew }) => {
                                     <div><span style={{ opacity: 0.6, fontSize: '0.8rem' }}>Paid back</span><div style={{ color: '#16a34a', fontWeight: 500 }}>{formatCurrency(viewingEntry.amountPaid)}</div></div>
                                     <div><span style={{ opacity: 0.6, fontSize: '0.8rem' }}>Still outstanding</span><div style={{ fontWeight: 600, color: viewingEntry.remainingBalance > 0 ? '#d97706' : '#16a34a' }}>{formatCurrency(viewingEntry.remainingBalance)}</div></div>
                                 </div>
+                                <ForeignCurrencySummary value={viewingEntry} />
                                 {/* Payment progress bar */}
                                 {viewingEntry.amountGross > 0 && (
                                     <div style={{ marginTop: '0.75rem' }}>

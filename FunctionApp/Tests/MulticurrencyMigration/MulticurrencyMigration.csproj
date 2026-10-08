@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.11" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" />
+    <PackageReference Include="Azure.Identity" Version="1.13.0" />
+    <Compile Include="../../Data/FinanceHubDbContext.cs" Link="Data/FinanceHubDbContext.cs" />
+    <Compile Include="../../Models/**/*.cs" Link="Models/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../../Migrations/*.cs" Link="Migrations/%(Filename)%(Extension)" />
+    <None Include="../../Migrations/Add-Multicurrency-Metadata.sql" Link="Add-Multicurrency-Metadata.sql" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

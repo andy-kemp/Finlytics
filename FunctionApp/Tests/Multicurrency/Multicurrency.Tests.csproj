@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Helpers/GbpSettlementPolicy.cs" Link="GbpSettlementPolicy.cs" />
+    <Compile Include="../../Models/BankAccount.cs" Link="BankAccount.cs" />
+    <Compile Include="../../Helpers/ForeignCurrencyHelper.cs" Link="ForeignCurrencyHelper.cs" />
+    <Compile Include="../../Models/IForeignCurrencyRecord.cs" Link="IForeignCurrencyRecord.cs" />
+    <Compile Include="../../Models/ForeignCurrencyMetadata.cs" Link="ForeignCurrencyMetadata.cs" />
+    <Compile Include="../../Models/Expense.cs" Link="Expense.cs" />
+    <Compile Include="../../Models/DlaEntry.cs" Link="DlaEntry.cs" />
+    <Compile Include="../../Models/DlaStartup.cs" Link="DlaStartup.cs" />
+    <Compile Include="../../Models/BankTransaction.cs" Link="BankTransaction.cs" />
+  </ItemGroup>
+</Project>

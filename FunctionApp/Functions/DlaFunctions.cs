@@ -13,6 +13,7 @@ using FinanceHubFunctions.Models;
 using FinanceHubFunctions.Data;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
+using FinanceHubFunctions.Helpers;
 
 namespace FinanceHubFunctions.Functions
 {
@@ -230,12 +231,20 @@ namespace FinanceHubFunctions.Functions
 
             try
             {
-                var dlaEntry = await req.ReadFromJsonAsync<DlaEntry>();
-                if (dlaEntry == null)
+                var body = await req.ReadAsStringAsync();
+                if (!ForeignCurrencyHelper.TryRead<DlaEntry>(body, out var dlaEntry, out var parseError))
                 {
                     var errorResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                    await errorResponse.WriteStringAsync("Invalid DLA entry data");
+                    await errorResponse.WriteAsJsonAsync(new { error = parseError }, HttpStatusCode.BadRequest);
                     return errorResponse;
+                }
+
+                var currencyError = ForeignCurrencyHelper.Validate(dlaEntry!, isNew: true);
+                if (currencyError != null)
+                {
+                    var bad = req.CreateResponse(HttpStatusCode.BadRequest);
+                    await bad.WriteAsJsonAsync(new { error = currencyError }, HttpStatusCode.BadRequest);
+                    return bad;
                 }
 
                 // ── Trivial Benefit enforcement (HMRC s.323) ──────────────────────────────
@@ -357,12 +366,27 @@ namespace FinanceHubFunctions.Functions
 
             try
             {
-                var request = await req.ReadFromJsonAsync<DlaStartupRequest>();
-                if (request == null)
+                var body = await req.ReadAsStringAsync();
+                if (!ForeignCurrencyHelper.TryRead<DlaStartupRequest>(body, out var request, out var parseError))
                 {
                     var badRequest = req.CreateResponse(HttpStatusCode.BadRequest);
-                    await badRequest.WriteStringAsync("Invalid request");
+                    await badRequest.WriteAsJsonAsync(new { error = parseError }, HttpStatusCode.BadRequest);
                     return badRequest;
+                }
+
+                var mode = request!.Mode?.Trim().ToLowerInvariant() ?? "single";
+                var metadata = mode == "single"
+                    ? new IForeignCurrencyRecord[] { request }
+                    : (request.Items ?? new List<DlaStartupItem>()).Cast<IForeignCurrencyRecord>().ToArray();
+                foreach (var itemMetadata in metadata)
+                {
+                    var currencyError = itemMetadata == null ? "Invalid startup item" : ForeignCurrencyHelper.Validate(itemMetadata, isNew: true);
+                    if (currencyError != null)
+                    {
+                        var badRequest = req.CreateResponse(HttpStatusCode.BadRequest);
+                        await badRequest.WriteAsJsonAsync(new { error = currencyError }, HttpStatusCode.BadRequest);
+                        return badRequest;
+                    }
                 }
 
                 if (string.IsNullOrWhiteSpace(request.Director))
@@ -385,7 +409,6 @@ namespace FinanceHubFunctions.Functions
 
                 var createdEntries = new List<DlaEntry>();
                 var entryDate = request.EntryDate ?? DateTime.UtcNow.Date;
-                var mode = request.Mode?.Trim().ToLowerInvariant() ?? "single";
 
                 if (mode == "single")
                 {
@@ -421,6 +444,7 @@ namespace FinanceHubFunctions.Functions
                         SourceBatchId = batchId
                     };
 
+                    ForeignCurrencyHelper.Copy(request, entry);
                     entry.DlaId = await _dlaRepository.GenerateNextDlaIdAsync();
                     entry.CreatedDate = DateTime.UtcNow;
                     entry.ModifiedDate = DateTime.UtcNow;
@@ -479,6 +503,8 @@ namespace FinanceHubFunctions.Functions
                             SourceBatchId = batchId
                         };
 
+                        ForeignCurrencyHelper.Copy(item, entry);
+
                         entry.DlaId = await _dlaRepository.GenerateNextDlaIdAsync();
                         entry.CreatedDate = DateTime.UtcNow;
                         entry.ModifiedDate = DateTime.UtcNow;
@@ -534,6 +560,11 @@ namespace FinanceHubFunctions.Functions
 
             try
             {
+                var body = await req.ReadAsStringAsync();
+                return await _dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+                {
+                _dbContext.ChangeTracker.Clear();
+                await using var settlementTransaction = await _dbContext.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
                 var existingEntry = await _dlaRepository.GetByIdAsync(id);
                 if (existingEntry == null)
                 {
@@ -542,21 +573,30 @@ namespace FinanceHubFunctions.Functions
                     return notFoundResponse;
                 }
 
-                var updatedData = await req.ReadFromJsonAsync<DlaEntry>();
-                if (updatedData == null)
+                if (!ForeignCurrencyHelper.TryRead<DlaEntry>(body, out var updatedData, out var parseError))
                 {
                     var errorResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                    await errorResponse.WriteStringAsync("Invalid DLA entry data");
+                    await errorResponse.WriteAsJsonAsync(new { error = parseError }, HttpStatusCode.BadRequest);
                     return errorResponse;
                 }
+
+                ForeignCurrencyHelper.PreserveOmitted(updatedData!, existingEntry, body!);
+                var currencyError = ForeignCurrencyHelper.Validate(updatedData!, existing: existingEntry);
+                if (currencyError != null)
+                {
+                    var bad = req.CreateResponse(HttpStatusCode.BadRequest);
+                    await bad.WriteAsJsonAsync(new { error = currencyError }, HttpStatusCode.BadRequest);
+                    return bad;
+                }
+                ForeignCurrencyHelper.Copy(updatedData!, existingEntry);
 
                 // Preserve system fields
                 existingEntry.Director = updatedData.Director;
                 existingEntry.Description = updatedData.Description;
                 existingEntry.Category = updatedData.Category;
-                existingEntry.AmountNet = updatedData.AmountNet;
-                existingEntry.VatAmount = updatedData.VatAmount;
-                existingEntry.AmountGross = updatedData.AmountGross;
+                if (ForeignCurrencyHelper.HasProperty(body!, "amountNet")) existingEntry.AmountNet = updatedData.AmountNet;
+                if (ForeignCurrencyHelper.HasProperty(body!, "vatAmount")) existingEntry.VatAmount = updatedData.VatAmount;
+                if (ForeignCurrencyHelper.HasProperty(body!, "amountGross")) existingEntry.AmountGross = updatedData.AmountGross;
                 existingEntry.EntryDate = updatedData.EntryDate;
                 existingEntry.DatePaid = updatedData.DatePaid;
                 existingEntry.PaymentMethod = updatedData.PaymentMethod;
@@ -623,10 +663,12 @@ namespace FinanceHubFunctions.Functions
                 existingEntry.ModifiedDate = DateTime.UtcNow;
 
                 var updated = await _dlaRepository.UpdateAsync(existingEntry);
+                await settlementTransaction.CommitAsync();
 
                 var response = req.CreateResponse(HttpStatusCode.OK);
                 await response.WriteAsJsonAsync(updated);
                 return response;
+                });
             }
             catch (Exception ex)
             {

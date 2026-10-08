@@ -4,7 +4,11 @@
     <AzureFunctionsVersion>v4</AzureFunctionsVersion>
     <OutputType>Exe</OutputType>
     <RootNamespace>FinanceHubFunctions</RootNamespace>
+    <FunctionsEnableExecutorSourceGen>false</FunctionsEnableExecutorSourceGen>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="Tests/**/*.cs" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Azure.AI.FormRecognizer" Version="4.1.0" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker" Version="1.21.0" />
