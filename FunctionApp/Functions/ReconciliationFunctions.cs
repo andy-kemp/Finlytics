@@ -239,7 +239,8 @@ namespace FinanceHubFunctions.Functions
                         RelatedId = invoice.Id.ToString(),
                         Display = $"Invoice {invoice.InvoiceNumber} ({invoice.CustomerName})",
                         Notes = $"Matched invoice {invoice.InvoiceNumber}",
-                        Score = score
+                        Score = score,
+                        Exact = IsExact(tx, invoice.AmountGross, invoice.DatePaid ?? invoice.DateIssued)
                     });
                 }
             }
@@ -264,7 +265,8 @@ namespace FinanceHubFunctions.Functions
                         RelatedId = payment.Id.ToString(),
                         Display = $"DLA Payment {payment.PaymentId} ({payment.DlaId})",
                         Notes = $"Matched DLA payment {payment.PaymentId ?? payment.DlaId}",
-                        Score = score + 5
+                        Score = score + 5,
+                        Exact = IsExact(tx, payment.Amount, payment.PaymentDate)
                     });
                 }
 
@@ -286,7 +288,8 @@ namespace FinanceHubFunctions.Functions
                         RelatedId = dla.Id.ToString(),
                         Display = $"DLA {dla.DlaId} ({dla.Director})",
                         Notes = $"Matched DLA {dla.DlaId}",
-                        Score = score
+                        Score = score,
+                        Exact = IsExact(tx, dla.AmountGross, dla.DatePaid ?? dla.EntryDate)
                     });
                 }
 
@@ -309,7 +312,8 @@ namespace FinanceHubFunctions.Functions
                         RelatedId = bill.Id.ToString(),
                         Display = $"Bill {bill.BillNumber} ({bill.SupplierName})",
                         Notes = $"Matched bill {bill.BillNumber}",
-                        Score = score
+                        Score = score,
+                        Exact = IsExact(tx, billAmount, bill.DatePaid ?? bill.DateIssued)
                     });
                 }
 
@@ -332,7 +336,8 @@ namespace FinanceHubFunctions.Functions
                         RelatedId = expense.Id.ToString(),
                         Display = $"Expense {labelRef}",
                         Notes = $"Matched expense {labelRef}",
-                        Score = score
+                        Score = score,
+                        Exact = IsExact(tx, expense.ActualGbpPaid ?? expense.AmountGross ?? 0m, expense.SettlementDate ?? expense.DatePaid ?? expense.EntryDate)
                     });
                 }
             }
@@ -417,7 +422,12 @@ namespace FinanceHubFunctions.Functions
             public string Display { get; set; } = string.Empty;
             public string Notes { get; set; } = string.Empty;
             public int Score { get; set; }
+            public bool Exact { get; set; }
         }
+
+        // Unattended matching must not pair records whose amounts merely look similar.
+        private static bool IsExact(BankTransaction tx, decimal? amount, DateTime? date) =>
+            AmountMatches(tx.Amount, amount) && WithinDays(tx.TransactionDate, date, 30);
 
         private class AutoReconcileSelection
         {
@@ -526,7 +536,7 @@ namespace FinanceHubFunctions.Functions
                 var top = candidates[0];
                 var second = candidates.Count > 1 ? candidates[1] : null;
                 var isAmbiguous = second != null && (top.Score - second.Score) <= 10;
-                if (isAmbiguous) continue;
+                if (isAmbiguous || !top.Exact) continue;
 
                 if (await CreateMatchAndMarkAsync(tx.Id, top.RelatedType, top.RelatedId, top.Notes))
                 {

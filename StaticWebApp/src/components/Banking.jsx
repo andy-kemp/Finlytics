@@ -1,8 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import BankImportPreview from './BankImportPreview';
+import MonthlyReconciliationReview from './MonthlyReconciliationReview';
+import ReceiptInbox from './ReceiptInbox';
 import { parseBankCsv, previewBankImport } from '../utils/bankCsv.mjs';
 import { compareBankToApp } from '../utils/bankReconciliation.mjs';
-import { getInvoices, getExpenses, getDlaEntries, getAllDlaPayments, getCompanyLedger, confirmExpenseGbpSettlement } from '../services/apiService';
+import { buildMonthlyApplyRequest, buildMonthlyProposals } from '../utils/monthlyReconciliation.mjs';
+import { getInvoices, getExpenses, getDlaEntries, getAllDlaPayments, getCompanyLedger, confirmExpenseGbpSettlement, getCategories, getCashBaseline, getReceiptInbox, applyMonthlyReconciliation } from '../services/apiService';
 import { getBankAccounts, createBankAccount, updateBankAccount, deleteBankAccount, getBankTransactionsByAccount, createBankTransaction, importBankTransactions, getTrueLayerStatus, getTrueLayerAuthUrl, syncTrueLayerTransactions, disconnectTrueLayer, getGoCardlessInstitutions, connectBankGoCardless, syncGoCardlessTransactions, getGoCardlessBankStatus } from '../services/apiService';
 
 const defaultAccount = {
@@ -46,6 +49,8 @@ export default function Banking() {
     const [gcPickerAccountId, setGcPickerAccountId] = useState(null);
     const [csvImporting, setCsvImporting] = useState(false);
     const [csvPreview, setCsvPreview] = useState(null);
+    const [inboxVersion, setInboxVersion] = useState(0);
+    const ownerApi = Boolean(import.meta.env.VITE_SETTLEMENT_API_SCOPE);
     const csvInputRef = useRef(null);
 
     const gcInstitutionList = Array.isArray(gcInstitutions)
@@ -230,7 +235,19 @@ export default function Banking() {
             } catch (error) {
                 comparison = { comparisonError: error.message };
             }
-            setCsvPreview({ ...previewBankImport(parsed.transactions, existing), ...parsed, ...comparison, fileName: file.name, accountId: selectedAccount.id, currency: selectedAccount.currency || 'GBP' });
+            let monthly = {};
+            if (ownerApi && !comparison.comparisonError) {
+                const [inbox, categories, baseline] = await Promise.all([
+                    getReceiptInbox().catch(() => []), getCategories().catch(() => []), getCashBaseline(selectedAccount.id).catch(() => null)
+                ]);
+                const categoryList = Array.isArray(categories) ? categories : [];
+                monthly = {
+                    categories: categoryList,
+                    proposals: buildMonthlyProposals({ transactions: parsed.transactions, comparisons: comparison.comparisons, existing,
+                        inbox: inbox.filter(item => item.status === 'analysed'), baselineDate: baseline?.asOfDate || null, categories: categoryList })
+                };
+            }
+            setCsvPreview({ ...previewBankImport(parsed.transactions, existing), ...parsed, ...comparison, ...monthly, fileName: file.name, accountId: selectedAccount.id, currency: selectedAccount.currency || 'GBP' });
         } catch (error) {
             console.error('Error importing CSV:', error);
             setSyncResult({ success: false, message: `CSV import failed: ${error.message}` });
@@ -251,6 +268,38 @@ export default function Banking() {
             setCsvPreview(null);
         } catch (error) {
             setSyncResult({ success: false, message: `CSV import failed: ${error.message}` });
+        } finally {
+            setCsvImporting(false);
+        }
+    };
+
+    const handleApplyMonthly = async () => {
+        if (!csvPreview?.proposals || csvPreview.accountId !== selectedAccount?.id || csvImporting) return;
+        const request = buildMonthlyApplyRequest(csvPreview.accountId, csvPreview.proposals);
+        if (!request.actions.length) return;
+        if (request.actions.some(action => action.action === 'createExpense' && !action.supplier)) {
+            setSyncResult({ success: false, message: 'Every new expense needs a supplier name.' });
+            return;
+        }
+        if (!window.confirm(`Apply ${request.actions.length} reconciliation action(s)? New expenses and links are created in one step.`)) return;
+        setCsvImporting(true);
+        try {
+            const ids = new Set(request.actions.map(action => action.externalId));
+            const existing = await getBankTransactionsByAccount(csvPreview.accountId);
+            const missing = previewBankImport(csvPreview.transactions.filter(transaction => ids.has(transaction.externalId)), existing).newTransactions;
+            if (missing.length) await importBankTransactions(missing);
+            const result = await applyMonthlyReconciliation(request);
+            const bankRecords = await getBankTransactionsByAccount(csvPreview.accountId);
+            setCsvPreview(previous => ({
+                ...previous, ...previewBankImport(previous.transactions, bankRecords),
+                proposals: previous.proposals.map(proposal => ids.has(proposal.externalId)
+                    ? { ...proposal, kind: 'done', selected: false, reason: 'Reconciled' } : proposal)
+            }));
+            await loadTransactions(csvPreview.accountId);
+            setInboxVersion(version => version + 1);
+            setSyncResult({ success: true, message: `Reconciled: ${result.linked} linked, ${result.expenses.length} expense(s) created` });
+        } catch (error) {
+            setSyncResult({ success: false, message: `Reconciliation not applied: ${error.message}. Imported bank rows are kept for review.` });
         } finally {
             setCsvImporting(false);
         }
@@ -667,7 +716,13 @@ export default function Banking() {
                         </div>
                     </div>
 
+                    {ownerApi && <ReceiptInbox key={inboxVersion} />}
+
                     {csvPreview && <BankImportPreview preview={csvPreview} processing={csvImporting} onConfirm={handleConfirmCsvImport} onCancel={() => setCsvPreview(null)} onSettlement={import.meta.env.VITE_SETTLEMENT_API_SCOPE ? handleConfirmSettlement : undefined} />}
+
+                    {csvPreview?.proposals && <MonthlyReconciliationReview proposals={csvPreview.proposals} categories={csvPreview.categories || []}
+                        processing={csvImporting} canApply={csvPreview.rejected.length === 0 && csvPreview.statement.balanceErrors.length === 0}
+                        onChange={proposals => setCsvPreview(previous => ({ ...previous, proposals }))} onApply={handleApplyMonthly} />}
 
                     {showTransactionForm && (
                         <div className="form-card">

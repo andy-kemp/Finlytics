@@ -1429,6 +1429,42 @@ export async function recordPotBalances(accountId, snapshot) {
     return response.json();
 }
 
+const ownerHeaders = () => getSettlementHeaders(msalInstance, import.meta.env.VITE_SETTLEMENT_API_SCOPE, msalInstance.getAllAccounts()[0]);
+
+async function ownerJson(response, fallback) {
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `${fallback} (${response.status})`);
+    return result;
+}
+
+export async function getReceiptInbox() {
+    const response = await fetch(`${API_BASE}/receipts/inbox`, { headers: await ownerHeaders() });
+    return ownerJson(response, 'Receipt inbox unavailable');
+}
+
+export async function uploadReceiptsToInbox(files) {
+    const { Authorization } = await ownerHeaders();
+    const body = new FormData();
+    Array.from(files).forEach(file => body.append('files', file, file.name));
+    const response = await fetch(`${API_BASE}/receipts/inbox`, { method: 'POST', headers: { Authorization }, body });
+    return ownerJson(response, 'Receipts could not be uploaded');
+}
+
+export async function analyseReceiptInbox() {
+    const response = await fetch(`${API_BASE}/receipts/inbox/analyse`, { method: 'POST', headers: await ownerHeaders(), body: '{}' });
+    return ownerJson(response, 'Stored receipts could not be read');
+}
+
+export async function dismissInboxReceipt(name) {
+    const response = await fetch(`${API_BASE}/receipts/inbox/dismiss`, { method: 'POST', headers: await ownerHeaders(), body: JSON.stringify({ name }) });
+    return ownerJson(response, 'Receipt could not be dismissed');
+}
+
+export async function applyMonthlyReconciliation(request) {
+    const response = await fetch(`${API_BASE}/reconciliation/monthly/apply`, { method: 'POST', headers: await ownerHeaders(), body: JSON.stringify(request) });
+    return ownerJson(response, 'Reconciliation could not be applied');
+}
+
 export async function createBankAccount(account) {
     const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE}/bank/accounts`, {

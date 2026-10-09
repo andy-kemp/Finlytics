@@ -259,6 +259,59 @@ namespace FinanceHubFunctions.Services
             await blobClient.DeleteIfExistsAsync();
         }
 
+        public async Task<string> UploadInboxReceiptAsync(string blobName, byte[] content, string contentType, IDictionary<string, string> metadata)
+        {
+            var container = _blobServiceClient.GetBlobContainerClient(FinanceHubFunctions.Helpers.ReceiptInboxPolicy.Container);
+            await container.CreateIfNotExistsAsync(PublicAccessType.None);
+            var blob = container.GetBlobClient(blobName);
+            using var stream = new MemoryStream(content);
+            await blob.UploadAsync(stream, new BlobUploadOptions
+            {
+                Metadata = metadata,
+                HttpHeaders = new BlobHttpHeaders { ContentType = contentType },
+                Conditions = new BlobRequestConditions { IfNoneMatch = Azure.ETag.All }
+            });
+            return blobName;
+        }
+
+        public async Task<List<FinanceHubFunctions.Helpers.ReceiptInboxItem>> ListInboxReceiptsAsync()
+        {
+            var container = _blobServiceClient.GetBlobContainerClient(FinanceHubFunctions.Helpers.ReceiptInboxPolicy.Container);
+            var items = new List<FinanceHubFunctions.Helpers.ReceiptInboxItem>();
+            if (!await container.ExistsAsync()) return items;
+            await foreach (var blob in container.GetBlobsAsync(BlobTraits.Metadata))
+                items.Add(FinanceHubFunctions.Helpers.ReceiptInboxPolicy.Read(blob.Name, blob.Properties.ContentLength ?? 0,
+                    blob.Properties.CreatedOn, blob.Metadata));
+            return items;
+        }
+
+        public async Task<(byte[] Content, IDictionary<string, string> Metadata, string ContentType)?> DownloadInboxReceiptAsync(string blobName)
+        {
+            var blob = _blobServiceClient.GetBlobContainerClient(FinanceHubFunctions.Helpers.ReceiptInboxPolicy.Container).GetBlobClient(blobName);
+            if (!await blob.ExistsAsync()) return null;
+            var download = await blob.DownloadContentAsync();
+            return (download.Value.Content.ToArray(), download.Value.Details.Metadata, download.Value.Details.ContentType);
+        }
+
+        public async Task<IDictionary<string, string>?> GetInboxMetadataAsync(string blobName)
+        {
+            var blob = _blobServiceClient.GetBlobContainerClient(FinanceHubFunctions.Helpers.ReceiptInboxPolicy.Container).GetBlobClient(blobName);
+            if (!await blob.ExistsAsync()) return null;
+            return (await blob.GetPropertiesAsync()).Value.Metadata;
+        }
+
+        public Task SetInboxMetadataAsync(string blobName, IDictionary<string, string> metadata) =>
+            _blobServiceClient.GetBlobContainerClient(FinanceHubFunctions.Helpers.ReceiptInboxPolicy.Container)
+                .GetBlobClient(blobName).SetMetadataAsync(metadata);
+
+        public async Task<(string Url, string BlobName)> CopyInboxToExpenseReceiptAsync(string inboxBlobName, int expenseId, string expenseCode, string fileName)
+        {
+            var source = await DownloadInboxReceiptAsync(inboxBlobName)
+                ?? throw new InvalidOperationException("Inbox receipt no longer exists");
+            var url = await UploadReceiptAsync(expenseId, expenseCode, source.Content, fileName);
+            return (url, $"{expenseCode}/{fileName}");
+        }
+
         public async Task<string> UploadMissingReceiptDeclarationPdfAsync(int expenseId, string declarationId, byte[] pdfContent)
         {
             var containerClient = _blobServiceClient.GetBlobContainerClient(ExpenseReceiptsContainer);
