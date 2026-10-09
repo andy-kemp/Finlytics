@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import TrivialBenefitModal from './TrivialBenefitModal';
 import QuickInvoice from './QuickInvoice';
 import PotBalancePanel from './PotBalancePanel';
-import { calculateBookCashWithPots } from '../utils/potBalances.mjs';
+import { calculateAvailableAfterTax, calculateBookCashWithPots } from '../utils/potBalances.mjs';
 import { calculateRecordedTradingCash } from '../utils/cashCalculations.mjs';
 import { calculateMainAccountBookBalance, loadMainAccountCashBaseline } from '../utils/cashBaseline.mjs';
 import {
@@ -353,9 +353,13 @@ export default function Dashboard({ onNavigate }) {
                     if (potSnapshot && mainAccountBookBalance !== null) bookCashWithPots = calculateBookCashWithPots(mainAccountBookBalance, potSnapshot, cashBaselineState.transactions);
                 } catch (error) { potBalanceError = error.message; }
             }
+            let availableAfterTax = null;
+            try {
+                availableAfterTax = calculateAvailableAfterTax(bookCashWithPots, potSnapshot, unfiledVatBalance, corpTaxDue);
+            } catch (error) { potBalanceError = potBalanceError || error.message; }
 
             setMetrics({
-                potSnapshot, potBalanceError, bookCashWithPots,
+                potSnapshot, potBalanceError, bookCashWithPots, availableAfterTax,
                 income, incomeNet, incomeVAT,
                 billedTotal,
                 expenses: expenseGross, expenseNet, expenseVAT, nonCtExpenseGross, nonCtExpenseItems,
@@ -865,6 +869,26 @@ export default function Dashboard({ onNavigate }) {
                             : <div className="metric-detail">All-time in: {formatCurrency(metrics.recordedCashIn)} | Out: {formatCurrency(metrics.recordedCashOut)}</div>}
                         {metrics.cashBaselineError && <div className="metric-detail" role="alert" style={{ color: '#b91c1c' }}>Main-account book balance unavailable: {metrics.cashBaselineError}. Company cash only.</div>}
                         {metrics.cashPaymentWarnings.length > 0 && <div className="metric-detail" style={{ color: '#b91c1c' }}>{metrics.cashPaymentWarnings.length} DLA payment discrepancies</div>}
+                    </div>
+                </div>
+
+                <div className="metric-card balance" title={metrics.availableAfterTax ? [
+                    'Book balance including pots, less the estimated VAT owed and Corporation Tax due.',
+                    'If a pot holds more than its tax estimate, the extra is available; if it holds less, the shortfall comes out of the main account.',
+                    'VAT refunds owed to you are not counted until received. Payments not yet recorded in the app are not included.'
+                ].join('\n\n') : undefined}>
+                    <div className="metric-icon">💷</div>
+                    <div className="metric-content">
+                        <div className="metric-label">Available After Tax <span aria-hidden="true" style={{ cursor: 'help' }}>ⓘ</span></div>
+                        <div className={`metric-value ${(metrics.availableAfterTax?.available ?? 0) >= 0 ? 'positive' : 'negative'}`}>
+                            {metrics.availableAfterTax ? formatCurrency(metrics.availableAfterTax.available) : 'Unavailable'}
+                        </div>
+                        <div className="metric-detail">
+                            {metrics.availableAfterTax ? <>
+                                <div>VAT pot {formatCurrency(metrics.potSnapshot.vatPotBalance)} − owed {formatCurrency(metrics.vatSetAside)} = {formatCurrency(metrics.availableAfterTax.vatSurplus)}</div>
+                                <div>CT pot {formatCurrency(metrics.potSnapshot.ctPotBalance)} − due {formatCurrency(metrics.corpTaxSetAside)} = {formatCurrency(metrics.availableAfterTax.ctSurplus)}</div>
+                            </> : 'Needs book balance and an up-to-date pot snapshot'}
+                        </div>
                     </div>
                 </div>
 

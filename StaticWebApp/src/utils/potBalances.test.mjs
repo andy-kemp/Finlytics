@@ -1,8 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { calculateBookCashWithPots } from './potBalances.mjs';
+import { calculateAvailableAfterTax, calculateBookCashWithPots } from './potBalances.mjs';
 
 const snapshot = { vatPotBalance: 650, ctPotBalance: 1071.82, asOfDate: '2026-10-08' };
+
+test('pot surpluses over estimated VAT and CT liabilities are available cash', () => {
+    const result = calculateAvailableAfterTax(calculateBookCashWithPots(996.86, snapshot), snapshot, 508.14, 958.53);
+    assert.deepEqual(result, { available: 1252.01, vatSurplus: 141.86, ctSurplus: 113.29 });
+});
+
+test('pot shortfalls reduce available cash and VAT reclaims are not counted', () => {
+    const result = calculateAvailableAfterTax(calculateBookCashWithPots(996.86, snapshot), snapshot, -200, 1200);
+    assert.deepEqual(result, { available: 1518.68, vatSurplus: 650, ctSurplus: -128.18 });
+    assert.equal(calculateAvailableAfterTax(null, snapshot, 0, 0), null);
+    assert.equal(calculateAvailableAfterTax({ overall: null, excludingPots: 1 }, snapshot, 0, 0), null);
+});
 
 test('overall book cash includes actual pots; excluding pots is main-account book cash', () => {
     const result = calculateBookCashWithPots(1029.15, snapshot);
