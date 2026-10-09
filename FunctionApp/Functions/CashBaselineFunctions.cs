@@ -37,7 +37,7 @@ namespace FinanceHubFunctions.Functions
             return response;
         }
 
-        private static async Task<HttpResponseData> Result(HttpRequestData req, CashBaselineRecord? baseline)
+        private static async Task<HttpResponseData> Result(HttpRequestData req, object? baseline)
         {
             var response = req.CreateResponse(HttpStatusCode.OK);
             response.Headers.Add("Content-Type", "application/json; charset=utf-8");
@@ -60,6 +60,114 @@ namespace FinanceHubFunctions.Functions
             .Where(entry => entry.EntryType == CashBaselinePolicy.EntryType
                 || (entry.Notes != null && entry.Notes.Contains("[CASH-BASELINE:"))).ToListAsync();
 
+        private async Task<System.Collections.Generic.List<PotBalanceRecord>> PotSnapshots(int accountId, DateTime now)
+        {
+            var entries = await _db.CompanyLedger.AsNoTracking().Where(entry => entry.EntryType == PotBalancePolicy.EntryType
+                || (entry.Notes != null && entry.Notes.Contains("[POT-BALANCES:"))).ToListAsync();
+            return entries.Select(entry => PotBalancePolicy.Read(entry, now))
+                .Where(record => record.BankAccountId == accountId).ToList();
+        }
+
+        [Function("GetBankPotBalances")]
+        public async Task<HttpResponseData> GetBankPotBalances(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "bank/accounts/{id:int}/pot-balances")] HttpRequestData req, int id)
+        {
+            var authorization = await _auth.ValidateRequest(req);
+            if (!authorization.IsAuthorized) return await Error(req, authorization.StatusCode, authorization.Error!);
+            try
+            {
+                var accounts = await _db.BankAccounts.AsNoTracking().ToListAsync();
+                if (!accounts.Any(item => item.Id == id)) return await Error(req, HttpStatusCode.NotFound, "Bank account not found");
+                var accountError = CashBaselinePolicy.ValidateAccount(id, accounts);
+                if (accountError != null) return await Error(req, HttpStatusCode.Conflict, accountError);
+                return await Result(req, PotBalancePolicy.Latest(await PotSnapshots(id, DateTime.UtcNow)));
+            }
+            catch (Exception exception) when (exception is InvalidOperationException || exception is JsonException)
+            {
+                return await Error(req, HttpStatusCode.Conflict, "Pot snapshot audit record is invalid; review required");
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Error reading pot balances for account {Id}", id);
+                return await Error(req, HttpStatusCode.ServiceUnavailable, "Pot balances are unavailable");
+            }
+        }
+
+        [Function("CreateBankPotBalances")]
+        public async Task<HttpResponseData> CreateBankPotBalances(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "bank/accounts/{id:int}/pot-balances")] HttpRequestData req, int id)
+        {
+            var authorization = await _auth.ValidateRequest(req);
+            if (!authorization.IsAuthorized) return await Error(req, authorization.StatusCode, authorization.Error!);
+            PotBalanceRequest? request;
+            try
+            {
+                var body = await req.ReadAsStringAsync();
+                if (string.IsNullOrWhiteSpace(body) || body.Length > 16000)
+                    return await Error(req, HttpStatusCode.BadRequest, "A bounded pot balances JSON object is required");
+                using var document = JsonDocument.Parse(body);
+                if (document.RootElement.ValueKind != JsonValueKind.Object || HasDuplicateProperties(document.RootElement))
+                    return await Error(req, HttpStatusCode.BadRequest, "A JSON object with unique field names is required");
+                request = JsonSerializer.Deserialize<PotBalanceRequest>(body, CashBaselinePolicy.Json);
+                if (request == null) return await Error(req, HttpStatusCode.BadRequest, "Pot balances request is required");
+            }
+            catch (JsonException)
+            {
+                return await Error(req, HttpStatusCode.BadRequest, "Only vatPotBalance, ctPotBalance, asOfDate and reference are accepted");
+            }
+            var validation = PotBalancePolicy.Validate(request, DateTime.UtcNow);
+            if (validation != null) return await Error(req, HttpStatusCode.BadRequest, validation);
+            try
+            {
+                return await _db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+                {
+                    _db.ChangeTracker.Clear();
+                    await using var transaction = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+                    var accounts = await _db.BankAccounts.AsNoTracking().ToListAsync();
+                    if (!accounts.Any(item => item.Id == id)) return await Error(req, HttpStatusCode.NotFound, "Bank account not found");
+                    var accountError = CashBaselinePolicy.ValidateAccount(id, accounts);
+                    if (accountError != null) return await Error(req, HttpStatusCode.Conflict, accountError);
+                    var now = DateTime.UtcNow;
+                    var records = await PotSnapshots(id, now);
+                    var identical = PotBalancePolicy.Latest(records.Where(record => PotBalancePolicy.Identical(record, request)));
+                    if (identical != null) return await Result(req, identical);
+                    var snapshot = PotBalancePolicy.Create(id, request, now);
+                    CashBaselinePolicy.TryDate(snapshot.AsOfDate, out var date);
+                    var entry = new CompanyLedgerEntry
+                    {
+                        Title = "Owner-asserted actual bank pot balances",
+                        EntryType = PotBalancePolicy.EntryType,
+                        Amount = 0,
+                        EffectiveDate = date,
+                        PeriodKey = date.ToString("yyyy-MM", CultureInfo.InvariantCulture),
+                        TaxYear = date.Month > 4 || (date.Month == 4 && date.Day >= 6) ? date.Year : date.Year - 1,
+                        Notes = PotBalancePolicy.Notes(snapshot)
+                    };
+                    if (entry.Notes.Length > 2000)
+                        return await Error(req, HttpStatusCode.BadRequest, "Pot snapshot metadata exceeds the existing 2000-character notes limit");
+                    _db.CompanyLedger.Add(entry);
+                    await _db.SaveChangesAsync();
+                    snapshot = snapshot with { LedgerEntryId = entry.Id };
+                    entry.Notes = PotBalancePolicy.Notes(snapshot);
+                    if (entry.Notes.Length > 2000)
+                        return await Error(req, HttpStatusCode.BadRequest, "Pot snapshot metadata exceeds the existing 2000-character notes limit");
+                    await _db.SaveChangesAsync();
+                    await transaction.CommitAsync();
+                    return await Result(req, snapshot);
+                });
+            }
+            catch (Exception exception) when (exception is InvalidOperationException || exception is JsonException)
+            {
+                _logger.LogWarning(exception, "Invalid pot snapshot audit record for account {Id}", id);
+                return await Error(req, HttpStatusCode.Conflict, "Pot snapshot audit record is invalid; review required");
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Error creating pot snapshot for account {Id}", id);
+                return await Error(req, HttpStatusCode.ServiceUnavailable, "Pot snapshot could not be confirmed; retry the identical request");
+            }
+        }
+
         [Function("GetBankCashBaseline")]
         public async Task<HttpResponseData> GetBankCashBaseline(
             [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "bank/accounts/{id:int}/cash-baseline")] HttpRequestData req, int id)
@@ -73,9 +181,15 @@ namespace FinanceHubFunctions.Functions
                 var accountError = CashBaselinePolicy.ValidateAccount(id, accounts);
                 if (accountError != null) return await Error(req, HttpStatusCode.Conflict, accountError);
                 var entries = await Baselines();
-                if (entries.Count == 0) return await Result(req, null);
+                var amendments = await _db.CompanyLedger.AsNoTracking()
+                    .Where(entry => entry.EntryType == CashBaselineAmendmentPolicy.EntryType
+                        || (entry.Notes != null && entry.Notes.Contains("[CASH-BASELINE-AMENDMENT:"))).ToListAsync();
+                if (entries.Count == 0 && amendments.Count == 0) return await Result(req, null);
                 if (entries.Count != 1) return await Error(req, HttpStatusCode.Conflict, "Ambiguous cash baseline records; review required");
-                return await Result(req, CashBaselinePolicy.Read(entries[0], id));
+                var baseline = CashBaselinePolicy.Read(entries[0], id);
+                var expenses = amendments.Count == 0 ? new System.Collections.Generic.List<Expense>()
+                    : await _db.Expenses.AsNoTracking().ToListAsync();
+                return await Result(req, CashBaselineAmendmentPolicy.Compose(baseline, amendments, expenses, DateTime.UtcNow));
             }
             catch (Exception exception) when (exception is InvalidOperationException || exception is JsonException)
             {

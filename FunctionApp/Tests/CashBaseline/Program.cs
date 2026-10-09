@@ -53,6 +53,7 @@ if (args.SequenceEqual(new[] { "--parity" }))
     sources.PayrollRuns.Add(new());
     CaptureFrozen();
     sources.LedgerEntries.Add(new() { EntryType = "Cash_Baseline", Amount = 1029.15m, EffectiveDate = cutoff });
+    sources.LedgerEntries.Add(new() { EntryType = CashBaselineAmendmentPolicy.EntryType, Amount = 563.95m, EffectiveDate = cutoff });
     sources.Invoices.Add(new() { Status = "Paid", DatePaid = now.AddDays(1), AmountGross = 1000 });
     sources.DlaPayments.Add(new() { DlaId = "orphan", PaymentDate = cutoff, Amount = 106.8m });
     CaptureFrozen();
@@ -122,4 +123,128 @@ sources.BankTransactions.RemoveAt(1);
 sources.Invoices.Add(new() { Status = "Paid", DatePaid = cutoff.AddDays(1), AmountGross = 1 });
 Check(CashBaselinePolicy.ValidateSources(1, request, sources, now) != null, "later cash movement refuses historical snapshot");
 Check(CashBaselinePolicy.Pennies(-1.005m) == -1m, "JavaScript negative half-penny rounding parity");
-Console.WriteLine("All offline cash baseline checks passed.");
+var potRequest = new PotBalanceRequest(650m, 1071.82m, "2026-10-08", "Owner actual balances including interest");
+Check(PotBalancePolicy.Validate(potRequest, now) == null, "owner actual VAT 650 and CT 1071.82 accepted");
+Check(PotBalancePolicy.Validate(potRequest with { VatPotBalance = 0, CtPotBalance = 0 }, now) == null, "zero pots accepted");
+Check(PotBalancePolicy.Validate(potRequest with { VatPotBalance = null }, now) != null, "explicit VAT balance required");
+Check(PotBalancePolicy.Validate(potRequest with { CtPotBalance = null }, now) != null, "explicit CT balance required");
+Check(PotBalancePolicy.Validate(potRequest with { VatPotBalance = -0.01m }, now) != null, "negative pot rejected");
+Check(PotBalancePolicy.Validate(potRequest with { CtPotBalance = 1.001m }, now) != null, "fractional penny rejected");
+Check(PotBalancePolicy.Validate(potRequest with { VatPotBalance = decimal.MaxValue }, now) != null, "decimal max rejected without overflow");
+Check(PotBalancePolicy.Validate(potRequest with { CtPotBalance = decimal.MinValue }, now) != null, "decimal min rejected without overflow");
+Check(PotBalancePolicy.Validate(potRequest with { VatPotBalance = PotBalancePolicy.MaximumBalance, CtPotBalance = PotBalancePolicy.MaximumBalance }, now) == null, "storage maximum accepted independently");
+Check(PotBalancePolicy.Validate(potRequest with { AsOfDate = "1999-12-31" }, now) != null, "pre-2000 date rejected");
+Check(PotBalancePolicy.Validate(potRequest with { AsOfDate = "2000-01-01" }, now) == null, "lower date boundary accepted");
+Check(PotBalancePolicy.Validate(potRequest with { AsOfDate = "2026-10-09" }, now) != null, "future pot date rejected");
+Check(PotBalancePolicy.Validate(potRequest with { AsOfDate = "2026-10-08T00:00:00Z" }, now) != null, "timestamp is not explicit pot date");
+Check(PotBalancePolicy.Validate(potRequest with { Reference = " " }, now) != null
+    && PotBalancePolicy.Validate(potRequest with { Reference = new string('x', 251) }, now) != null, "reference bounded and required");
+var potRecord = PotBalancePolicy.Create(1, potRequest, now) with { LedgerEntryId = 100 };
+var potLedger = new CompanyLedgerEntry { Id = 100, EntryType = PotBalancePolicy.EntryType,
+    EffectiveDate = now.Date, Notes = PotBalancePolicy.Notes(potRecord) };
+Check(PotBalancePolicy.Read(potLedger, now) == potRecord
+    && potLedger.Notes.StartsWith("[POT-BALANCES:1]\n") && potLedger.Notes.Length <= 2000, "compact audit round trip includes actual ledger ID");
+Check(PotBalancePolicy.Identical(potRecord, potRequest)
+    && !PotBalancePolicy.Identical(potRecord, potRequest with { CtPotBalance = 1072 })
+    && !PotBalancePolicy.Identical(potRecord, potRequest with { Reference = "correction" }), "pot retry identity includes values date and reference");
+var correction = potRecord with { LedgerEntryId = 101, CtPotBalance = 1072 };
+var older = potRecord with { LedgerEntryId = 102, AsOfDate = "2026-10-07" };
+Check(PotBalancePolicy.Latest(new[] { older, correction, potRecord }) == correction, "date wins then latest ID for same-day correction");
+Check(PotBalancePolicy.Latest(Array.Empty<PotBalanceRecord>()) == null, "no pot snapshot returns null");
+Check(PotBalancePolicy.IsReserved(new() { EntryType = "bank_potsnapshot" })
+    && PotBalancePolicy.IsReserved(new() { EntryType = "DLA_In", Notes = "forged [pot-balances:1]" }), "reserved pot type and forged marker protected case-insensitively");
+var beforePot = sources.Calculate(now);
+sources.LedgerEntries.Add(potLedger);
+Check(sources.Calculate(now) == beforePot, "actual pot snapshots do not alter backend calculated cash");
+Check(CashBaselinePolicy.ValidateAccount(1, new[] { new BankAccount { Id = 1, Currency = "EUR", IsActive = true } }) != null
+    && CashBaselinePolicy.ValidateAccount(1, new[] { new BankAccount { Id = 1, Currency = "GBP", IsActive = false } }) != null,
+    "pot routing reuses sole active GBP policy");
+potLedger.Amount = 1;
+try { PotBalancePolicy.Read(potLedger, now); throw new Exception("Corrupt pot ledger accepted"); }
+catch (InvalidOperationException) { Check(true, "nonzero pot ledger amount rejected"); }
+var originalNotes = JsonNodeWithoutProjection(notes);
+string JsonNodeWithoutProjection(string value)
+{
+    var prefixLength = value.IndexOf('\n') + 1;
+    var metadata = System.Text.Json.Nodes.JsonNode.Parse(value.Substring(prefixLength))!.AsObject();
+    metadata.Remove("historicalExpenseAdjustment");
+    metadata.Remove("amendments");
+    return value.Substring(0, prefixLength) + metadata.ToJsonString();
+}
+ledger.Notes = originalNotes;
+var legacy = CashBaselinePolicy.Read(ledger, 1) with { RecordedCashAtCreation = 3871.03m };
+Check(legacy.HistoricalExpenseAdjustment == 0 && legacy.Amendments == null, "old baseline notes deserialize with optional defaults");
+var historicalExpenses = Enumerable.Range(10, 10).Select(expenseId => new Expense
+    { Id = expenseId, AmountGross = expenseId == 19 ? 59.95m : 56m, DatePaid = cutoff }).ToList();
+var amendment = new CashBaselineAmendmentRecord(1, 99, 563.95m, "Owner approved ten historical bank expense additions",
+    historicalExpenses.Select(expense => expense.Id).ToList(),
+    historicalExpenses.Select(expense => "historical-" + expense.Id).ToList(), now);
+var amendmentEntry = new CompanyLedgerEntry { Id = 1000, EntryType = CashBaselineAmendmentPolicy.EntryType,
+    Amount = amendment.Amount, EffectiveDate = now.Date, Notes = CashBaselineAmendmentPolicy.Notes(amendment) };
+var amended = CashBaselineAmendmentPolicy.Compose(legacy, new[] { amendmentEntry }, historicalExpenses, now);
+var historicalCash = new RecordedCashSources
+{
+    Invoices = new() { new() { Status = "Paid", DatePaid = cutoff, AmountGross = 3871.03m } },
+    Expenses = historicalExpenses.Concat(new[] { new Expense { Id = 20, DatePaid = cutoff, AmountGross = 19.99m },
+        new Expense { Id = 21, DatePaid = cutoff, AmountGross = 12.30m } }).ToList(),
+    LedgerEntries = new() { amendmentEntry }
+};
+Check(historicalCash.Calculate(now) == 3274.79m, "ten historical additions and two pending expenses produce unchanged raw cash 3274.79");
+Check(amended.BookBalance + 3274.79m - amended.RecordedCashAtCreation + amended.HistoricalExpenseAdjustment == 996.86m,
+    "1029.15 baseline plus 563.95 amendment and raw delta 3274.79 - 3871.03 = 996.86");
+Check(amended.Amendments![0].LedgerEntryId == 1000 && ledger.Notes == originalNotes
+    && legacy.HistoricalExpenseAdjustment == 0, "composition exposes audit ID without rewriting original baseline");
+historicalExpenses[0].AmountGross += 10;
+Check(CashBaselineAmendmentPolicy.Compose(legacy, new[] { amendmentEntry }, historicalExpenses, now).HistoricalExpenseAdjustment == 563.95m,
+    "later expense amount edits retain original amendment amount and raw delta");
+void RefuseAmendment(CompanyLedgerEntry candidate, string name, IEnumerable<Expense>? expenses = null,
+    IEnumerable<CompanyLedgerEntry>? entries = null)
+{
+    try { CashBaselineAmendmentPolicy.Compose(legacy, entries ?? new[] { candidate }, expenses ?? historicalExpenses, now); }
+    catch (Exception exception) when (exception is InvalidOperationException || exception is JsonException)
+    { Check(true, name); return; }
+    throw new Exception(name + " accepted");
+}
+CompanyLedgerEntry AmendmentWith(CashBaselineAmendmentRecord record) => new()
+    { Id = 1001, EntryType = CashBaselineAmendmentPolicy.EntryType, Amount = record.Amount,
+        EffectiveDate = now.Date, Notes = CashBaselineAmendmentPolicy.Notes(record) };
+RefuseAmendment(AmendmentWith(amendment with { BankAccountId = 2 }), "wrong account marker refused");
+RefuseAmendment(AmendmentWith(amendment with { BaselineLedgerEntryId = 98 }), "wrong baseline ID refused");
+RefuseAmendment(AmendmentWith(amendment with { LedgerEntryId = 999 }), "wrong amendment ID refused");
+RefuseAmendment(AmendmentWith(amendment with { Amount = -1 }), "negative adjustment refused");
+RefuseAmendment(AmendmentWith(amendment with { Amount = 1.001m }), "fractional penny refused");
+RefuseAmendment(AmendmentWith(amendment with { ExpenseIds = new() { 10, 10 } }), "duplicate expense IDs refused");
+RefuseAmendment(amendmentEntry, "missing current expense refused", historicalExpenses.Skip(1));
+RefuseAmendment(amendmentEntry, "sources cannot repeat across amendments", entries: new[] { amendmentEntry, AmendmentWith(amendment) });
+RefuseAmendment(amendmentEntry, "external IDs cannot repeat with different expense IDs", entries: new[] { amendmentEntry,
+    AmendmentWith(amendment with { ExpenseIds = Enumerable.Range(30, 10).ToList() }) },
+    expenses: historicalExpenses.Concat(Enumerable.Range(30, 10).Select(expenseId => new Expense { Id = expenseId })));
+RefuseAmendment(amendmentEntry, "same audit entry cannot be counted twice", entries: new[] { amendmentEntry, amendmentEntry });
+var secondAmendment = amendment with { Amount = 1.25m, ExpenseIds = new() { 30 }, ExternalIds = new() { "independent-history" } };
+Check(CashBaselineAmendmentPolicy.Compose(legacy, new[] { AmendmentWith(secondAmendment), amendmentEntry },
+    historicalExpenses.Append(new Expense { Id = 30 }), now).HistoricalExpenseAdjustment == 565.20m,
+    "independent amendments sum once in audit ID order");
+RefuseAmendment(AmendmentWith(amendment with { Amount = 0 }), "zero amendment refused");
+RefuseAmendment(AmendmentWith(amendment with { Amount = decimal.MaxValue }), "oversized amount refused without overflow");
+RefuseAmendment(AmendmentWith(amendment with { RecordedAtUtc = now.AddDays(-1) }), "amendment cannot predate original snapshot");
+RefuseAmendment(new() { Id = 1001, EntryType = "DLA_In", Amount = amendment.Amount, EffectiveDate = now.Date,
+    Notes = amendmentEntry.Notes }, "forged amendment marker with cash type refused");
+RefuseAmendment(new() { Id = 1001, EntryType = CashBaselineAmendmentPolicy.EntryType, Amount = 1, EffectiveDate = now.Date,
+    Notes = amendmentEntry.Notes }, "ledger amount mismatch refused");
+RefuseAmendment(new() { Id = 1001, EntryType = CashBaselineAmendmentPolicy.EntryType, Amount = amendment.Amount, EffectiveDate = now.Date,
+    Notes = amendmentEntry.Notes!.Replace("\"bankAccountId\":1", "\"bankAccountId\":1,\"BankAccountId\":1") }, "duplicate JSON fields refused");
+var amendmentJson = JsonSerializer.Serialize(amended.Amendments![0], CashBaselinePolicy.Json);
+using (var contract = JsonDocument.Parse(amendmentJson))
+    Check(contract.RootElement.EnumerateObject().Select(property => property.Name).SequenceEqual(new[] {
+        "bankAccountId", "baselineLedgerEntryId", "amount", "reason", "expenseIds", "externalIds", "recordedAtUtc", "ledgerEntryId" }),
+        "exact amendment response fields use recordedAtUtc not createdAt");
+RefuseAmendment(AmendmentWith(amendment with { ExternalIds = amendment.ExternalIds.Select(_ => "same").ToList() }), "duplicate external IDs refused");
+RefuseAmendment(AmendmentWith(amendment with { ExternalIds = new List<string> { "paddle" }.Concat(amendment.ExternalIds.Skip(1)).ToList() }), "pending baseline expense cannot be neutralized");
+RefuseAmendment(AmendmentWith(amendment with { RecordedAtUtc = now.AddDays(1) }), "future recorded timestamp refused");
+Check(CashBaselineAmendmentPolicy.IsReserved(new() { EntryType = "cash_baselineamendment" })
+    && CashBaselineAmendmentPolicy.IsReserved(new() { EntryType = "DLA_In", Notes = "forged [cash-baseline-amendment:1]" }),
+    "reserved amendment types and forged markers protected");
+var rawBeforeAmendment = sources.Calculate(now);
+sources.LedgerEntries.Add(amendmentEntry);
+Check(sources.Calculate(now) == rawBeforeAmendment, "monetary amendment ledger does not alter raw cash");
+Console.WriteLine("All offline cash baseline, amendment and pot snapshot checks passed.");

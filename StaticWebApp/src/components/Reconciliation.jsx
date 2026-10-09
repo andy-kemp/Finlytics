@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import PotBalancePanel from './PotBalancePanel';
 import {
     getUnreconciledTransactions,
     createReconciliationMatch,
@@ -158,6 +159,8 @@ export default function Reconciliation() {
                     {message.ok ? '[OK]' : '[ERR]'} {message.text}
                 </div>
             )}
+
+            <PotBalancePanel onSaved={snapshot => setMessage({ ok: true, text: `Actual VAT and CT pot balances recorded as of ${snapshot.asOfDate}` })} />
 
             {preview && (
                 <div style={{

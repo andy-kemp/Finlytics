@@ -7,6 +7,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../Helpers/CashBaselinePolicy.cs" Link="CashBaselinePolicy.cs" />
+    <Compile Include="../../Helpers/CashBaselineAmendmentPolicy.cs" Link="CashBaselineAmendmentPolicy.cs" />
+    <Compile Include="../../Helpers/PotBalancePolicy.cs" Link="PotBalancePolicy.cs" />
     <Compile Include="../../Models/Invoice.cs" Link="Invoice.cs" />
     <Compile Include="../../Models/Expense.cs" Link="Expense.cs" />
     <Compile Include="../../Models/IForeignCurrencyRecord.cs" Link="IForeignCurrencyRecord.cs" />

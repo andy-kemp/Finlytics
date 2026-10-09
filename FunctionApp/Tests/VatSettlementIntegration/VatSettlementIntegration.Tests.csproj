@@ -9,6 +9,8 @@
     <Compile Include="../../Functions/VatSettlementFunctions.cs" Link="VatSettlementFunctions.cs" />
     <Compile Include="../../Functions/CashBaselineFunctions.cs" Link="CashBaselineFunctions.cs" />
     <Compile Include="../../Helpers/CashBaselinePolicy.cs" Link="CashBaselinePolicy.cs" />
+    <Compile Include="../../Helpers/CashBaselineAmendmentPolicy.cs" Link="CashBaselineAmendmentPolicy.cs" />
+    <Compile Include="../../Helpers/PotBalancePolicy.cs" Link="PotBalancePolicy.cs" />
     <Compile Include="../../Functions/CompanyLedgerFunctions.cs" Link="CompanyLedgerFunctions.cs" />
     <Compile Include="../../Services/CompanyLedgerCalculations.cs" Link="CompanyLedgerCalculations.cs" />
     <Compile Include="../../Services/DeletionGuardService.cs" Link="DeletionGuardService.cs" />

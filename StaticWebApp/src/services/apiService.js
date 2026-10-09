@@ -1410,6 +1410,25 @@ export async function getCashBaseline(accountId) {
     return response.json();
 }
 
+export async function getPotBalances(accountId) {
+    const headers = await getSettlementHeaders(msalInstance, import.meta.env.VITE_SETTLEMENT_API_SCOPE, msalInstance.getAllAccounts()[0]);
+    const response = await fetch(`${API_BASE}/bank/accounts/${encodeURIComponent(accountId)}/pot-balances`, { headers });
+    if (!response.ok) throw new Error(`Actual pot balances unavailable (${response.status})`);
+    return response.json();
+}
+
+export async function recordPotBalances(accountId, snapshot) {
+    const headers = await getSettlementHeaders(msalInstance, import.meta.env.VITE_SETTLEMENT_API_SCOPE, msalInstance.getAllAccounts()[0]);
+    const response = await fetch(`${API_BASE}/bank/accounts/${encodeURIComponent(accountId)}/pot-balances`, {
+        method: 'POST', headers, body: JSON.stringify(snapshot)
+    });
+    if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || 'Actual pot balances could not be saved');
+    }
+    return response.json();
+}
+
 export async function createBankAccount(account) {
     const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE}/bank/accounts`, {

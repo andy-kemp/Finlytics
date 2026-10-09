@@ -64,13 +64,15 @@ await using (var db = new FinanceHubDbContext(new DbContextOptionsBuilder<Financ
             "Invalid baseline payload refused before database access: " + invalidBody);
     }
     foreach (var forgedBody in new[] { "{\"entryType\":\"Cash_Baseline\"}",
-        "{\"entryType\":\"DLA_In\",\"notes\":\"[cash-baseline:1] forged\"}" })
+        "{\"entryType\":\"DLA_In\",\"notes\":\"[cash-baseline:1] forged\"}",
+        "{\"entryType\":\"cash_baselineamendment\"}",
+        "{\"entryType\":\"DLA_In\",\"notes\":\"forged [cash-baseline-amendment:1] metadata\"}" })
     {
         var forged = await new CompanyLedgerFunctions(NullLoggerFactory.Instance,
             new TestCompanyLedgerRepository(db), new DeletionGuardService(db), db)
             .CreateCompanyLedgerEntry(new TestRequest(forgedBody, null));
         Check(forged.StatusCode == HttpStatusCode.BadRequest && denyConnections.Attempts == 0,
-            "Generic ledger refuses reserved cash baseline type or forged marker");
+            "Generic ledger refuses reserved baseline/amendment type or forged marker");
     }
     var generic = await new CompanyLedgerFunctions(NullLoggerFactory.Instance,
         new TestCompanyLedgerRepository(db), new DeletionGuardService(db), db)

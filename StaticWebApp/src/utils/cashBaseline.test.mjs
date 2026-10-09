@@ -15,6 +15,30 @@ const calculate = (balance = 2500, transactions = [], snapshot = baseline) =>
 const transfer = overrides => ({ bankAccountId: 7, amount: 200, direction: 'Out',
     category: 'Internal Transfer', transactionDate: '2026-10-02', ...overrides });
 
+test('approved historical additions use a separate penny amendment, preserving baseline and raw cash', () => {
+    const snapshot = { ...baseline, recordedCashAtCreation: 3871.03, historicalExpenseAdjustment: 563.95,
+        amendments: [{ ledgerEntryId: 1000, amount: 563.95, recordedAtUtc: '2026-10-09T12:00:00Z' }] };
+    const original = structuredClone(snapshot);
+    const raw = { balance: 3274.79 };
+    assert.equal(calculateMainAccountBookBalance(raw, snapshot, [], endDate), 996.86);
+    assert.equal(calculateMainAccountBookBalance({ balance: 3264.79 }, snapshot, [], endDate), 986.86);
+    assert.equal(calculateMainAccountBookBalance(raw, snapshot, [transfer()], endDate), 796.86);
+    assert.equal(calculateMainAccountBookBalance(raw, { ...snapshot, historicalExpenseAdjustment: undefined }, [], endDate), 432.91);
+    assert.equal(calculateMainAccountBookBalance(raw, { ...snapshot, historicalExpenseAdjustment: null }, [], endDate), 432.91);
+    assert.throws(() => calculateMainAccountBookBalance(raw, { ...snapshot, historicalExpenseAdjustment: 'invalid' }, [], endDate), /invalid amount/);
+    assert.deepEqual(snapshot, original);
+    assert.equal(raw.balance, 3274.79);
+});
+
+test('amendment ledger amount never enters raw cash, period cash flow or tax cash basis', () => {
+    const records = { invoices: [{ status: 'Paid', amountGross: 3871.03, datePaid: '2026-09-01' }],
+        expenses: Array.from({ length: 10 }, (_, index) => ({ id: index + 1, amountGross: index === 9 ? 59.95 : 56, datePaid: '2026-09-30' })),
+        ledgerEntries: [{ entryType: 'Cash_BaselineAmendment', amount: 563.95, effectiveDate: '2026-10-08' }],
+        endDate: new Date(endDate) };
+    assert.deepEqual(calculateRecordedTradingCash(records), calculateRecordedTradingCash({ ...records, ledgerEntries: [] }));
+    assert.equal(calculateRecordedTradingCash({ ...records, startDate: new Date('2026-10-01') }).balance, 0);
+});
+
 test('generic audited baseline, not the statement balance or hardcoded amount', () => {
     assert.equal(calculate(), 1029.15);
     assert.equal(calculate(2500, [], { ...baseline, bookBalance: 88.75 }), 88.75);
@@ -125,7 +149,7 @@ test('only explicit null is no baseline; request failures retain error status', 
 
 test('API contract uses dedicated settlement authorization and only JSON null means no baseline', async () => {
     const source = readFileSync(new URL('../services/apiService.js', import.meta.url), 'utf8');
-    const getter = source.slice(source.indexOf('export async function getCashBaseline'), source.indexOf('export async function createBankAccount'));
+    const getter = source.slice(source.indexOf('export async function getCashBaseline'), source.indexOf('export async function getPotBalances'));
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
     const run = new AsyncFunction('getSettlementHeaders', 'API_BASE', 'fetch', 'msalInstance', 'scope',
         `${getter.replace('export async function', 'async function').replace('import.meta.env.VITE_SETTLEMENT_API_SCOPE', 'scope')}; return getCashBaseline(7);`);

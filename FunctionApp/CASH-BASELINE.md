@@ -1,7 +1,9 @@
 # Audited Main-Account Cash Baseline
 
-Backend only. No schema changes, opening-balance edits, accounting corrections,
-bank imports, tax changes, or automatic production writes. Historical discrepancies
+No schema changes, opening-balance edits, accounting corrections,
+bank imports, tax changes, or automatic production writes. See
+[read-only historical amendments](CASH-BASELINE-AMENDMENTS.md) for the separate
+audit storage, optional response fields and dashboard display contract. Historical discrepancies
 remain in the source records. This is a main-account display baseline, not
 multi-account cash allocation or evidence that the historical books reconcile.
 
@@ -102,7 +104,7 @@ Authoritative C# raw cash preserves the existing recorded-cash helper:
 For a later main-account display, use:
 
 ```text
-bookBalance + (currentRawCash - recordedCashAtCreation)
+bookBalance + historicalExpenseAdjustment + (currentRawCash - recordedCashAtCreation)
             + eligible signed internal transfers
 ```
 
@@ -119,10 +121,10 @@ invented. Never show a balance for a date before the baseline cutoff.
 Raw cash deltas include **all** subsequently changed source cash, including new
 backdated records, edits, deletions and status changes. Recording Paddle and Kittys
 later reduces the book balance once, from 1029.15 to 996.86. A historical edit is
-not neutralized by moving the snapshot or rewriting the baseline. A future UI
-should explicitly annotate historical changes against the retained audit record;
-this backend change does not implement that UI. No frontend models, helpers or
-bank CSVs were modified as part of this implementation.
+not neutralized by moving the snapshot or rewriting the baseline. The dashboard
+annotates source differences and separately approved historical amendments against
+the retained audit record. Amendments affect only the main-account display, not
+recorded cash, tax or bank imports; without amendments their adjustment is zero.
 
 ## Offline Verification
 

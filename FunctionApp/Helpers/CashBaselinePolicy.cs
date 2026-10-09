@@ -18,7 +18,8 @@ namespace FinanceHubFunctions.Helpers
     public sealed record CashBaselineRecord(int BankAccountId, decimal BookBalance, decimal StatementBalance,
         string AsOfDate, decimal RecordedCashAtCreation, DateTime SnapshotAtUtc,
         List<PendingCashExpense> PendingExpenses, string SourceSnapshotHash, string Reason, int LedgerEntryId,
-        List<CashTransferSnapshot> InternalTransferSnapshot, Dictionary<string, int> RecordCounts);
+        List<CashTransferSnapshot> InternalTransferSnapshot, Dictionary<string, int> RecordCounts,
+        decimal HistoricalExpenseAdjustment = 0, List<CashBaselineAmendmentRecord>? Amendments = null);
 
     public sealed class RecordedCashSources
     {
@@ -178,6 +179,7 @@ namespace FinanceHubFunctions.Helpers
             var record = JsonSerializer.Deserialize<CashBaselineRecord>(entry.Notes.Substring(prefix.Length), Json)
                 ?? throw new InvalidOperationException("Cash baseline metadata is missing");
             if (record.BankAccountId != accountId || record.BookBalance != entry.Amount
+                || record.HistoricalExpenseAdjustment != 0 || record.Amendments != null
                 || !TryDate(record.AsOfDate, out var date) || date != entry.EffectiveDate.Date
                 || Validate(new(record.BookBalance, record.StatementBalance, record.AsOfDate, record.Reason, record.PendingExpenses), record.SnapshotAtUtc) != null
                 || record.SourceSnapshotHash?.Length != 64 || record.InternalTransferSnapshot == null || record.RecordCounts == null)

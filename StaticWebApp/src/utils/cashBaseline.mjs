@@ -31,7 +31,8 @@ export function calculateMainAccountBookBalance(rawCash, baseline, bankTransacti
         if (!['In', 'Out'].includes(transaction.direction)) throw new Error('Internal transfer has an invalid direction');
         transfers += Math.abs(pennies(transaction.amount)) * (transaction.direction === 'In' ? 1 : -1);
     }
-    return (pennies(baseline.bookBalance) + recorded - pennies(baseline.recordedCashAtCreation) + transfers) / 100;
+    return (pennies(baseline.bookBalance) + pennies(baseline.historicalExpenseAdjustment ?? 0)
+        + recorded - pennies(baseline.recordedCashAtCreation) + transfers) / 100;
 }
 
 export async function loadMainAccountCashBaseline({ getBankAccounts, getCashBaseline, getBankTransactionsByAccount }) {

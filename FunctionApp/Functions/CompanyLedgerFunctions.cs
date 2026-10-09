@@ -76,6 +76,20 @@ namespace FinanceHubFunctions.Functions
                     return badRequest;
                 }
 
+                if (CashBaselineAmendmentPolicy.IsReserved(entry))
+                {
+                    var bad = req.CreateResponse(HttpStatusCode.BadRequest);
+                    await bad.WriteAsJsonAsync(new { error = "Cash baseline amendments are reserved for an approved administrative utility" }, HttpStatusCode.BadRequest);
+                    return bad;
+                }
+
+                if (PotBalancePolicy.IsReserved(entry))
+                {
+                    var bad = req.CreateResponse(HttpStatusCode.BadRequest);
+                    await bad.WriteAsJsonAsync(new { error = "Pot snapshots are reserved for the bank pot-balances endpoint" }, HttpStatusCode.BadRequest);
+                    return bad;
+                }
+
                 if (entry.EntryType.Equals("Cash_Baseline", StringComparison.OrdinalIgnoreCase)
                     || (entry.Notes?.Contains("[CASH-BASELINE:", StringComparison.OrdinalIgnoreCase) ?? false))
                 {
@@ -154,6 +168,18 @@ namespace FinanceHubFunctions.Functions
             try
             {
                 var entry = await _companyLedgerRepository.GetByIdAsync(id);
+                if (entry != null && CashBaselineAmendmentPolicy.IsReserved(entry))
+                {
+                    var conflict = req.CreateResponse(HttpStatusCode.Conflict);
+                    await conflict.WriteAsJsonAsync(new { error = "An audited cash baseline amendment cannot be deleted" }, HttpStatusCode.Conflict);
+                    return conflict;
+                }
+                if (entry != null && PotBalancePolicy.IsReserved(entry))
+                {
+                    var conflict = req.CreateResponse(HttpStatusCode.Conflict);
+                    await conflict.WriteAsJsonAsync(new { error = "An audited pot snapshot cannot be deleted" }, HttpStatusCode.Conflict);
+                    return conflict;
+                }
                 if (string.Equals(entry?.EntryType, "Cash_Baseline", StringComparison.OrdinalIgnoreCase)
                     || (entry?.Notes?.Contains("[CASH-BASELINE:", StringComparison.OrdinalIgnoreCase) ?? false))
                 {

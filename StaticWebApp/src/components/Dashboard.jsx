@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import TrivialBenefitModal from './TrivialBenefitModal';
 import QuickInvoice from './QuickInvoice';
+import PotBalancePanel from './PotBalancePanel';
+import { calculateBookCashWithPots } from '../utils/potBalances.mjs';
 import { calculateRecordedTradingCash } from '../utils/cashCalculations.mjs';
 import { calculateMainAccountBookBalance, loadMainAccountCashBaseline } from '../utils/cashBaseline.mjs';
 import {
@@ -18,6 +20,7 @@ import {
     getPayrollRuns,
     getBankAccounts,
     getCashBaseline,
+    getPotBalances,
     getBankTransactionsByAccount
 } from '../services/apiService';
 import {
@@ -341,8 +344,18 @@ export default function Dashboard({ onNavigate }) {
             }
             const sourceDifference = cashBaseline && Number.isFinite(Number(cashBaseline.recordedCashAtCreation))
                 ? Math.round((currentBalance - Number(cashBaseline.recordedCashAtCreation)) * 100) / 100 : null;
+            let potSnapshot = null;
+            let potBalanceError = null;
+            let bookCashWithPots = null;
+            if (cashBaselineState.account) {
+                try {
+                    potSnapshot = await getPotBalances(cashBaselineState.account.id);
+                    if (potSnapshot && mainAccountBookBalance !== null) bookCashWithPots = calculateBookCashWithPots(mainAccountBookBalance, potSnapshot, cashBaselineState.transactions);
+                } catch (error) { potBalanceError = error.message; }
+            }
 
             setMetrics({
+                potSnapshot, potBalanceError, bookCashWithPots,
                 income, incomeNet, incomeVAT,
                 billedTotal,
                 expenses: expenseGross, expenseNet, expenseVAT, nonCtExpenseGross, nonCtExpenseItems,
@@ -822,25 +835,27 @@ export default function Dashboard({ onNavigate }) {
                 <div className="metric-card balance">
                     <div className="metric-icon">🏦</div>
                     <div className="metric-content">
-                        <div className="metric-label">Company Cash After Estimated Tax</div>
-                        <div className={`metric-value ${metrics.operatingCashEstimate >= 0 ? 'positive' : 'negative'}`}>
-                            {formatCurrency(metrics.operatingCashEstimate)}
+                        <div className="metric-label">Overall Book Balance (Including Pots)</div>
+                        <div className={`metric-value ${(metrics.bookCashWithPots?.overall ?? 0) >= 0 ? 'positive' : 'negative'}`}>
+                            {metrics.bookCashWithPots?.overall != null ? formatCurrency(metrics.bookCashWithPots.overall) : 'Unavailable'}
                         </div>
                         <div className="metric-detail">
-                            VAT set-aside: {formatCurrency(metrics.vatSetAside)} | CT set-aside: {formatCurrency(metrics.corpTaxSetAside)}
+                            {metrics.potSnapshot ? <>VAT pot: {formatCurrency(metrics.potSnapshot.vatPotBalance)} | CT pot: {formatCurrency(metrics.potSnapshot.ctPotBalance)}<div>Pot snapshot: {metrics.potSnapshot.asOfDate}</div></> : 'Actual pot snapshot not recorded'}
                         </div>
+                        {metrics.potBalanceError && <div className="metric-detail" role="alert" style={{ color: '#b91c1c' }}>{metrics.potBalanceError}</div>}
+                        {metrics.bookCashWithPots?.stale && <div className="metric-detail" role="status">Later pot transfers found; refresh actual pot balances.</div>}
                     </div>
                 </div>
 
                 <div className="metric-card balance">
                     <div className="metric-icon">🧮</div>
                     <div className="metric-content">
-                        <div className="metric-label">{metrics.mainAccountBookBalance !== null ? 'Main Account Book Balance' : metrics.cashBaselineError ? 'Recorded Company Cash' : 'Recorded Cash Balance'}</div>
+                        <div className="metric-label">{metrics.mainAccountBookBalance !== null ? 'Book Balance Excluding VAT / CT Pots' : metrics.cashBaselineError ? 'Recorded Company Cash' : 'Recorded Cash Balance'}</div>
                         <div className={`metric-value ${(metrics.mainAccountBookBalance ?? metrics.totalCompanyCashEstimate) >= 0 ? 'positive' : 'negative'}`}>
                             {formatCurrency(metrics.mainAccountBookBalance ?? metrics.totalCompanyCashEstimate)}
                         </div>
                         {metrics.mainAccountBookBalance !== null ? <>
-                            <div className="metric-detail">Baseline + recorded changes | Baseline date: {String(metrics.cashBaseline.asOfDate).slice(0, 10)}</div>
+                            <div className="metric-detail">Baseline + historical amendments + recorded source changes + internal transfers | Baseline date: {String(metrics.cashBaseline.asOfDate).slice(0, 10)}</div>
                             <div className="metric-detail">Statement baseline: {formatCurrency(metrics.cashBaseline.statementBalance)}</div>
                             {Array.isArray(metrics.cashBaseline.pendingExpenses) && <div className="metric-detail">Baseline includes {formatCurrency(metrics.cashBaseline.pendingExpenses.reduce((total, expense) => total + Math.round(Number(expense.amount) * 100), 0) / 100)} pending expenses at creation</div>}
                         </> : <div className="metric-detail">All-time in: {formatCurrency(metrics.recordedCashIn)} | Out: {formatCurrency(metrics.recordedCashOut)}</div>}
@@ -879,6 +894,8 @@ export default function Dashboard({ onNavigate }) {
                 </div>
             </div>
 
+            <PotBalancePanel accountId={metrics.cashBaseline?.bankAccountId} snapshot={metrics.potSnapshot} onSaved={() => loadData()} />
+
             <details style={{ margin: '0 0 1rem', padding: '0.75rem 0', borderTop: '1px solid #cbd5e1' }}>
                 <summary style={{ cursor: 'pointer', fontWeight: 600 }}>{metrics.mainAccountBookBalance !== null ? `Main Account Book Balance: ${formatCurrency(metrics.mainAccountBookBalance)} - Cash Breakdown` : 'Recorded Company Cash Breakdown'}{metrics.cashPaymentWarnings.length > 0 ? ' - reconciliation required' : ''}</summary>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem', marginTop: '0.75rem' }}>
@@ -891,7 +908,8 @@ export default function Dashboard({ onNavigate }) {
                             ['DLA repayments paid', -metrics.recordedCashBreakdown.directorRepayments],
                             ['Loans to directors', -metrics.recordedCashBreakdown.directorLoans],
                             ['Other ledger payments', -metrics.recordedCashBreakdown.ledgerCashOut],
-                            ['Historical recorded company cash', metrics.totalCompanyCashEstimate]
+                            ['Historical recorded company cash', metrics.totalCompanyCashEstimate],
+                            ['Historical company cash after estimated tax', metrics.operatingCashEstimate]
                         ].map(([label, amount]) => <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', padding: '0.25rem 0' }}><dt>{label}</dt><dd style={{ margin: 0, whiteSpace: 'nowrap' }}>{formatCurrency(amount)}</dd></div>)}
                     </dl>
                     <div>
@@ -904,8 +922,9 @@ export default function Dashboard({ onNavigate }) {
                                     ['Recorded company cash at snapshot', metrics.cashBaseline.recordedCashAtCreation],
                                     ['Historical reconciliation difference', Number(metrics.cashBaseline.recordedCashAtCreation) - Number(metrics.cashBaseline.bookBalance)],
                                     ['Recorded changes since snapshot (source difference)', metrics.sourceDifference],
+                                    ['Historical baseline amendments', metrics.cashBaseline.historicalExpenseAdjustment ?? 0],
                                     ...(metrics.mainAccountBookBalance !== null ? [
-                                        ['Net main-account internal transfers since baseline', Math.round((metrics.mainAccountBookBalance - Number(metrics.cashBaseline.bookBalance) - metrics.sourceDifference) * 100) / 100],
+                                        ['Net main-account internal transfers since baseline', Math.round((metrics.mainAccountBookBalance - Number(metrics.cashBaseline.bookBalance) - Number(metrics.cashBaseline.historicalExpenseAdjustment ?? 0) - metrics.sourceDifference) * 100) / 100],
                                         ['Main account book balance', metrics.mainAccountBookBalance]
                                     ] : [])
                                 ].map(([label, amount]) => <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', padding: '0.25rem 0' }}><dt>{label}</dt><dd style={{ margin: 0, whiteSpace: 'nowrap' }}>{formatCurrency(amount)}</dd></div>)}
@@ -914,6 +933,15 @@ export default function Dashboard({ onNavigate }) {
                             <div>Reason: {metrics.cashBaseline.reason}</div>
                             <div>Source snapshot hash: {metrics.cashBaseline.sourceSnapshotHash}</div>
                             <div>Account: {metrics.cashBaseline.bankAccountId} | Audit ledger entry: {metrics.cashBaseline.ledgerEntryId}</div>
+                            {Array.isArray(metrics.cashBaseline.amendments) && metrics.cashBaseline.amendments.length > 0 && <div style={{ marginTop: '0.5rem' }}>
+                                <strong>Historical baseline amendments</strong>
+                                {metrics.cashBaseline.amendments.map(amendment => <div key={amendment.ledgerEntryId} style={{ marginTop: '0.5rem' }}>
+                                    <div>{formatCurrency(amendment.amount)} | Recorded: {amendment.recordedAtUtc} | Audit ledger entry: {amendment.ledgerEntryId}</div>
+                                    <div>Reason: {amendment.reason}</div>
+                                    <div>Account: {amendment.bankAccountId} | Original baseline ledger entry: {amendment.baselineLedgerEntryId}</div>
+                                    <div>Expense IDs: {amendment.expenseIds.join(', ')} | External IDs: {amendment.externalIds.join(', ')}</div>
+                                </div>)}
+                            </div>}
                             <div style={{ marginTop: '0.5rem' }}>Historical record corrections change the book balance through the recorded cash delta. This is a book balance, not a live bank balance. Transfer cutoff dates use UTC calendar days.</div>
                             {Array.isArray(metrics.cashBaseline.pendingExpenses) && metrics.cashBaseline.pendingExpenses.length > 0 && <div style={{ marginTop: '0.5rem' }}>
                                 <strong>Pending expenses included at baseline creation</strong>
