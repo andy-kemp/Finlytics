@@ -2,6 +2,8 @@ import React, { useEffect, useState, useRef } from 'react';
 import TrivialBenefitModal from './TrivialBenefitModal';
 import QuickInvoice from './QuickInvoice';
 import PotBalancePanel from './PotBalancePanel';
+import BankAttentionPanel from './BankAttentionPanel';
+import { bankAttention } from '../utils/bankAttention.mjs';
 import { calculateAvailableAfterTax, calculateBookCashWithPots } from '../utils/potBalances.mjs';
 import { calculateRecordedTradingCash } from '../utils/cashCalculations.mjs';
 import { calculateMainAccountBookBalance, loadMainAccountCashBaseline } from '../utils/cashBaseline.mjs';
@@ -158,14 +160,15 @@ export default function Dashboard({ onNavigate }) {
             if (metrics) { setRefreshing(true); } else { setLoading(true); }
             
             // Fire all fetches in parallel — no sequential waterfalls
+            const paymentReadErrors = [];
             const [invoicesRaw, expensesRaw, companyAggregates, settings, filedReturnsRaw, dlaEntriesRaw, dlaPaymentsRaw, ytdAggregates, billsSummary, payrollSettings, payrollRunsRaw, ledgerEntriesRaw, cashBaselineState] = await Promise.all([
                 getInvoices(),
                 getExpenses(),
                 getCompanyAggregates(getCurrentPeriodKey()).catch(() => ({})),
                 getCompanySettings().catch(() => null),
                 getVatReturns().catch(() => []),
-                getDlaEntries().catch(() => []),
-                getAllDlaPayments().catch(() => []),
+                getDlaEntries().catch(error => { paymentReadErrors.push(error.message); return []; }),
+                getAllDlaPayments().catch(error => { paymentReadErrors.push(error.message); return []; }),
                 getYtdAggregates().catch(() => ({})),
                 getBillsSummary().catch(() => null),
                 getPayrollSettings().catch(() => null),
@@ -326,6 +329,13 @@ export default function Dashboard({ onNavigate }) {
             const periodDlaPaidOut = periodDlaPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
 
             const cashRecords = { invoices, expenses, dlaEntries, dlaPayments, ledgerEntries, includePayroll };
+            let outstandingPayments = null;
+            let outstandingPaymentsError = cashBaselineState.error || paymentReadErrors[0] || null;
+            if (!outstandingPaymentsError) {
+                try {
+                    outstandingPayments = bankAttention(cashBaselineState.transactions, cashRecords, cashBaselineState.baseline?.asOfDate);
+                } catch (error) { outstandingPaymentsError = error.message; }
+            }
             const recordedCash = calculateRecordedTradingCash(cashRecords);
             const { startDate: cashStart, endDate: cashEnd } = getDateRange(settings);
             const periodCash = calculateRecordedTradingCash({ ...cashRecords, startDate: cashStart, endDate: cashEnd });
@@ -363,6 +373,7 @@ export default function Dashboard({ onNavigate }) {
             } catch (error) { potBalanceError = potBalanceError || error.message; }
 
             setMetrics({
+                outstandingPayments, outstandingPaymentsError,
                 potSnapshot, potBalanceError, bookCashWithPots, availableAfterTax,
                 income, incomeNet, incomeVAT,
                 billedTotal,
@@ -918,6 +929,12 @@ export default function Dashboard({ onNavigate }) {
                     </div>
                 </div>
             </div>
+
+            <BankAttentionPanel attention={metrics.outstandingPayments} error={metrics.outstandingPaymentsError}
+                onReview={onNavigate ? transaction => onNavigate('banking', {
+                    reviewAccountId: metrics.cashBaseline?.bankAccountId,
+                    reviewTransactionId: transaction?.id ?? null
+                }) : undefined} />
 
             <PotBalancePanel accountId={metrics.cashBaseline?.bankAccountId} snapshot={metrics.potSnapshot} onSaved={() => loadData()} />
 

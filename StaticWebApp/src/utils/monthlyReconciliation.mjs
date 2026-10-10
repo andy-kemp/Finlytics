@@ -102,6 +102,15 @@ export function buildMonthlyProposals({ transactions, comparisons = [], existing
     return proposals.map(proposal => ({ ...proposal, selected: proposal.kind === 'link' || proposal.kind === 'expense' }));
 }
 
+export function selectPaymentForReview(proposals, bankTransactionId) {
+    const requested = proposals.find(proposal => String(proposal.transaction.id) === String(bankTransactionId));
+    if (!requested) throw new Error('This bank payment is no longer awaiting review.');
+    if (requested.kind === 'done' || requested.kind === 'internal' || requested.kind === 'blocked')
+        throw new Error(requested.reason || 'This bank payment cannot be recorded again.');
+    return proposals.map(proposal => ({ ...proposal,
+        selected: proposal === requested && (proposal.kind === 'expense' || proposal.kind === 'link') }));
+}
+
 export function buildMonthlyApplyRequest(bankAccountId, proposals) {
     const actions = proposals.filter(proposal => proposal.selected && (proposal.kind === 'link' || proposal.kind === 'expense'))
         .map(proposal => proposal.kind === 'link'

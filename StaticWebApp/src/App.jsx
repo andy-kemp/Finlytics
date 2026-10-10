@@ -434,7 +434,7 @@ function MainContent() {
                 {view === 'bills' && <Bills />}
                 {view === 'expenses' && <Expenses openNew={viewOptions.openNew} />}
                 {view === 'vatreturns' && <VatReturns />}
-                {view === 'banking' && <Banking />}
+                {view === 'banking' && <Banking reviewAccountId={viewOptions.reviewAccountId} reviewTransactionId={viewOptions.reviewTransactionId} />}
                 {view === 'gocardless' && <GoCardlessPayments />}
                 {view === 'reconciliation' && <Reconciliation />}
                 {view === 'categorization-rules' && <CategorizationRules />}

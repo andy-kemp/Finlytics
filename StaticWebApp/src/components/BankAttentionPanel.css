@@ -1,0 +1,102 @@
+.bank-attention-panel {
+    margin: 1.25rem 0;
+    padding: 1rem 0;
+    border-top: 1px solid #d1d5db;
+    border-bottom: 1px solid #d1d5db;
+}
+
+.bank-attention-header,
+.bank-attention-warning,
+.bank-attention-totals {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.25rem;
+}
+
+.bank-attention-header h3 {
+    margin: 0;
+    font-size: 1.1rem;
+}
+
+.bank-attention-totals {
+    font-size: 0.9rem;
+}
+
+.bank-attention-empty {
+    color: #52606d;
+    margin-bottom: 0;
+}
+
+.bank-attention-warning {
+    margin-top: 0.75rem;
+    color: #9a3412;
+}
+
+.bank-attention-table {
+    width: 100%;
+    margin-top: 0.75rem;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+    table-layout: fixed;
+}
+
+.bank-attention-table th,
+.bank-attention-table td {
+    padding: 0.65rem 0.5rem;
+    text-align: left;
+    border-bottom: 1px solid #e5e7eb;
+    overflow-wrap: anywhere;
+}
+
+.bank-attention-table th:nth-child(2) {
+    width: 35%;
+}
+
+.bank-attention-table button {
+    max-width: 100%;
+    white-space: normal;
+}
+
+@media (max-width: 640px) {
+    .bank-attention-table thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+    }
+
+    .bank-attention-table,
+    .bank-attention-table tbody,
+    .bank-attention-table tr,
+    .bank-attention-table td {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    .bank-attention-table tr {
+        padding: 0.5rem 0;
+        border-bottom: 1px solid #d1d5db;
+    }
+
+    .bank-attention-table td {
+        display: grid;
+        grid-template-columns: 6rem minmax(0, 1fr);
+        align-items: center;
+        gap: 0.5rem;
+        border: none;
+        padding: 0.3rem 0;
+    }
+
+    .bank-attention-table td::before {
+        content: attr(data-label);
+        color: #52606d;
+    }
+
+    .bank-attention-table button {
+        justify-self: start;
+    }
+}

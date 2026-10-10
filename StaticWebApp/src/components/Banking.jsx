@@ -7,7 +7,7 @@ import { compareBankToApp } from '../utils/bankReconciliation.mjs';
 import { bankAttention } from '../utils/bankAttention.mjs';
 import { calculateRecordedTradingCash } from '../utils/cashCalculations.mjs';
 import { mainAccountBookBreakdown } from '../utils/cashBaseline.mjs';
-import { buildMonthlyApplyRequest, buildMonthlyProposals } from '../utils/monthlyReconciliation.mjs';
+import { buildMonthlyApplyRequest, buildMonthlyProposals, selectPaymentForReview } from '../utils/monthlyReconciliation.mjs';
 import { getInvoices, getExpenses, getDlaEntries, getAllDlaPayments, getCompanyLedger, confirmExpenseGbpSettlement, getCategories, getCashBaseline, getReceiptInbox, applyMonthlyReconciliation, getPayrollSettings, getPayrollRuns } from '../services/apiService';
 import { getBankAccounts, createBankAccount, updateBankAccount, deleteBankAccount, getBankTransactionsByAccount, createBankTransaction, importBankTransactions, getTrueLayerStatus, getTrueLayerAuthUrl, syncTrueLayerTransactions, disconnectTrueLayer, getGoCardlessInstitutions, connectBankGoCardless, syncGoCardlessTransactions, getGoCardlessBankStatus, getMonzoStatus, getMonzoAuthUrl, syncMonzoTransactions } from '../services/apiService';
 
@@ -48,7 +48,7 @@ const defaultTransaction = {
     direction: 'Out'
 };
 
-export default function Banking() {
+export default function Banking({ reviewAccountId = null, reviewTransactionId = null }) {
     const [accounts, setAccounts] = useState([]);
     const [selectedAccount, setSelectedAccount] = useState(null);
     const [transactions, setTransactions] = useState([]);
@@ -76,6 +76,7 @@ export default function Banking() {
     const [attention, setAttention] = useState(null);
     const [attentionError, setAttentionError] = useState(null);
     const [monzoBalance, setMonzoBalance] = useState(null);
+    const openedReview = useRef(null);
     const transactionLoadVersion = useRef(0);
     const ownerApi = Boolean(import.meta.env.VITE_SETTLEMENT_API_SCOPE);
     const csvInputRef = useRef(null);
@@ -192,8 +193,9 @@ export default function Banking() {
             const data = await getBankAccounts();
             setAccounts(data);
             if (data.length > 0) {
-                setSelectedAccount(data[0]);
-                return await loadTransactions(data[0].id);
+                const account = data.find(item => String(item.id) === String(reviewAccountId)) || data[0];
+                setSelectedAccount(account);
+                return await loadTransactions(account.id);
             }
         } catch (error) {
             console.error('Error loading accounts:', error);
@@ -229,7 +231,7 @@ export default function Banking() {
         }
     }
 
-    const handleReviewPayments = async () => {
+    const handleReviewPayments = async (event, bankTransactionId = null) => {
         if (!attention || attention.accountId !== selectedAccount?.id) return;
         if (attention.possibleDuplicatePayments.length) {
             setSyncResult({ success: false, message: 'Resolve the possible CSV/Monzo duplicate payments before reconciliation.' });
@@ -241,7 +243,8 @@ export default function Banking() {
             const proposals = buildMonthlyProposals({ transactions: attention.transactions, comparisons: attention.comparisons,
                 existing: transactions, inbox: inbox.filter(receipt => receipt.status === 'analysed'),
                 baselineDate: attention.baseline.asOfDate, categories });
-            setCsvPreview({ source: 'saved', accountId: selectedAccount.id, transactions: attention.transactions, proposals, categories,
+            const selectedProposals = bankTransactionId == null ? proposals : selectPaymentForReview(proposals, bankTransactionId);
+            setCsvPreview({ source: 'saved', accountId: selectedAccount.id, transactions: attention.transactions, proposals: selectedProposals, categories,
                 rejected: [], statement: { balanceErrors: [] } });
         } catch (error) {
             setSyncResult({ success: false, message: `Payment review unavailable: ${error.message}` });
@@ -249,6 +252,22 @@ export default function Banking() {
             setCsvImporting(false);
         }
     };
+
+    useEffect(() => {
+        if (reviewTransactionId == null || !attention || attention.accountId !== selectedAccount?.id) return;
+        if (reviewAccountId != null && String(reviewAccountId) !== String(attention.accountId)) return;
+        const key = `${attention.accountId}:${reviewTransactionId}`;
+        if (openedReview.current === key) return;
+        openedReview.current = key;
+        handleReviewPayments(null, reviewTransactionId);
+    }, [attention, selectedAccount?.id, reviewAccountId, reviewTransactionId]);
+
+    useEffect(() => {
+        if (csvPreview?.source !== 'saved') return;
+        const review = document.getElementById('bank-payment-review');
+        review?.scrollIntoView({ block: 'start' });
+        review?.focus({ preventScroll: true });
+    }, [csvPreview?.source]);
 
     const handleSelectAccount = async (account) => {
         setCsvPreview(null);
@@ -942,9 +961,9 @@ export default function Banking() {
 
                     {csvPreview && csvPreview.source !== 'saved' && <BankImportPreview preview={csvPreview} processing={csvImporting} onConfirm={handleConfirmCsvImport} onCancel={() => setCsvPreview(null)} onSettlement={import.meta.env.VITE_SETTLEMENT_API_SCOPE ? handleConfirmSettlement : undefined} />}
 
-                    {csvPreview?.proposals && <MonthlyReconciliationReview proposals={csvPreview.proposals} categories={csvPreview.categories || []}
+                    {csvPreview?.proposals && <section id="bank-payment-review" tabIndex={-1} aria-label="Selected bank payment review"><MonthlyReconciliationReview proposals={csvPreview.proposals} categories={csvPreview.categories || []}
                         processing={csvImporting} canApply={csvPreview.rejected.length === 0 && csvPreview.statement.balanceErrors.length === 0}
-                        onChange={proposals => setCsvPreview(previous => ({ ...previous, proposals }))} onApply={handleApplyMonthly} />}
+                        onChange={proposals => setCsvPreview(previous => ({ ...previous, proposals }))} onApply={handleApplyMonthly} /></section>}
 
                     {showTransactionForm && (
                         <div className="form-card">
