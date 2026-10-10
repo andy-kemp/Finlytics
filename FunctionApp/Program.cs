@@ -15,6 +15,7 @@ using FinanceHubFunctions.Services;
 var host = new HostBuilder()
     .ConfigureFunctionsWorkerDefaults(builder =>
     {
+        builder.UseMiddleware<ApiAuthorizationMiddleware>();
         builder.Services.Configure<JsonSerializerOptions>(options =>
         {
             options.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;

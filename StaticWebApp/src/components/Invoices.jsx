@@ -1,6 +1,6 @@
 // v2
 import React, { useState, useEffect } from 'react';
-import { getInvoices, createInvoice, updateInvoice, deleteInvoice, getCustomers, getCompanySettings, getNextInvoiceNumber, sendInvoiceReminder, getCreditNotesByCustomer, applyCreditNote, getLineItemDescriptions } from '../services/apiService';
+import { getInvoices, createInvoice, updateInvoice, deleteInvoice, getCustomers, getCompanySettings, getNextInvoiceNumber, sendInvoiceReminder, getCreditNotesByCustomer, applyCreditNote, getLineItemDescriptions, openApiDocument } from '../services/apiService';
 import Toast from './Toast';
 import { useToast } from '../hooks/useToast';
 import ConfirmDeleteModal from './ConfirmDeleteModal';
@@ -272,9 +272,7 @@ export default function Invoices() {
 
   const handleViewPdf = async (invoiceId, invoiceNumber) => {
     try {
-      // Open the PDF in a new window
-      const pdfUrl = `${API_BASE}/invoices/${invoiceId}/pdf`;
-      window.open(pdfUrl, '_blank');
+      await openApiDocument(`${API_BASE}/invoices/${invoiceId}/pdf`);
     } catch (error) {
       console.error('Error viewing PDF:', error);
       showToast('Failed to open PDF', 'error');

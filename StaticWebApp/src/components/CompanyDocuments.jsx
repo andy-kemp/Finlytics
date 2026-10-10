@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getCompanyDocuments, uploadDocument, deleteDocument, downloadDocument, downloadDocumentPdf, getCompanySettings, updateCompanySettings } from '../services/apiService';
+import { getCompanyDocuments, uploadDocument, deleteDocument, downloadDocument, downloadDocumentPdf, getCompanySettings, updateCompanySettings, getAuthHeaders } from '../services/apiService';
 import Toast from './Toast';
 import { useToast } from '../hooks/useToast';
 
@@ -248,9 +248,7 @@ const CompanyDocuments = () => {
     try {
       const response = await fetch(`https://financehub-func-kemponline.azurewebsites.net/api/companydocuments/update?blobName=${encodeURIComponent(editingDoc.blobName)}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: await getAuthHeaders(),
         body: JSON.stringify({
           documentType: editingDoc.documentType,
           personName: editingDoc.personName,

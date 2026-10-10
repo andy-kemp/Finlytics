@@ -1,6 +1,6 @@
 import { msalInstance, loginRequest } from '../auth/authConfig';
 import { currencyMetadata } from '../utils/foreignCurrencyForm.mjs';
-import { getSettlementHeaders } from '../utils/settlementAuth.mjs';
+import { getSettlementHeaders, settlementScope } from '../utils/settlementAuth.mjs';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'https://financehub-func-kemponline.azurewebsites.net/api';
 
@@ -16,7 +16,7 @@ export async function getAuthHeaders() {
         throw new Error('No authenticated user');
     }
 
-    const request = { scopes: ['User.Read'], account: accounts[0] };
+    const request = { scopes: [settlementScope(import.meta.env.VITE_SETTLEMENT_API_SCOPE)], account: accounts[0] };
 
     // Return cached token if still valid (with 60s buffer)
     const now = Date.now();
@@ -59,6 +59,31 @@ export async function getAuthHeaders() {
 }
 
 // SharePoint authentication removed - all endpoints now use regular API authentication
+
+export async function fetchApiBlob(url) {
+    const { Authorization } = await getAuthHeaders();
+    const response = await fetch(url, { headers: { Authorization } });
+    if (!response.ok) throw new Error(`Document unavailable (${response.status})`);
+    return response.blob();
+}
+
+// Opens the tab synchronously so popup blockers allow it, then loads the authenticated file into it.
+export async function openApiDocument(url) {
+    const tab = window.open('', '_blank');
+    try {
+        const objectUrl = URL.createObjectURL(await fetchApiBlob(url));
+        if (tab) tab.location.href = objectUrl;
+        else window.open(objectUrl, '_blank');
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 120_000);
+    } catch (error) {
+        tab?.close();
+        alert(error.message);
+    }
+}
+
+export function apiLinkProps(url) {
+    return { href: '#', onClick: event => { event.preventDefault(); openApiDocument(url); } };
+}
 
 export async function generateCode(name, type) {
     const headers = await getAuthHeaders();
@@ -429,17 +454,7 @@ export async function getPaymentMethods() {
 }
 
 export async function uploadReceipt(expenseId, file) {
-    const accounts = msalInstance.getAllAccounts();
-    if (accounts.length === 0) {
-        throw new Error('No authenticated user');
-    }
-
-    const request = {
-        scopes: ['User.Read'],
-        account: accounts[0]
-    };
-
-    const tokenResponse = await msalInstance.acquireTokenSilent(request);
+    const { Authorization } = await getAuthHeaders();
     
     const formData = new FormData();
     formData.append('file', file);
@@ -447,7 +462,7 @@ export async function uploadReceipt(expenseId, file) {
     const response = await fetch(`${API_BASE}/expenses/${expenseId}/upload`, {
         method: 'POST',
         headers: {
-            'Authorization': `Bearer ${tokenResponse.accessToken}`
+            Authorization
             // NO Content-Type - browser sets it automatically with boundary for multipart/form-data
         },
         body: formData
@@ -1896,14 +1911,12 @@ export async function deleteAsset(id) {
 }
 
 export async function uploadAssetInvoice(assetId, file) {
-    const accounts = msalInstance.getAllAccounts();
-    if (accounts.length === 0) throw new Error('No authenticated user');
-    const tokenResponse = await msalInstance.acquireTokenSilent({ scopes: ['User.Read'], account: accounts[0] });
+    const { Authorization } = await getAuthHeaders();
     const formData = new FormData();
     formData.append('file', file);
     const response = await fetch(`${API_BASE}/assets/${assetId}/invoice`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${tokenResponse.accessToken}` },
+        headers: { Authorization },
         body: formData
     });
     if (!response.ok) {

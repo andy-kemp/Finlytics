@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getExpenses, createExpense, updateExpense, deleteExpense, getCategories, getVATApplicabilities, getPaymentMethods, getSuppliers, uploadReceipt, deleteAttachment, getCompanySettings, getExpenseAttachments, analyzeInvoice, getAuthHeaders, getTrivialBenefitSummary, getMissingReceiptDeclaration, createMissingReceiptDeclaration, finaliseMissingReceiptDeclaration, voidMissingReceiptDeclaration, getExpenseAuditEvents, getDeclarationPdfUrl, patchExpenseNoReceiptReason } from '../services/apiService';
+import { getExpenses, createExpense, updateExpense, deleteExpense, getCategories, getVATApplicabilities, getPaymentMethods, getSuppliers, uploadReceipt, deleteAttachment, getCompanySettings, getExpenseAttachments, analyzeInvoice, getAuthHeaders, getTrivialBenefitSummary, getMissingReceiptDeclaration, createMissingReceiptDeclaration, finaliseMissingReceiptDeclaration, voidMissingReceiptDeclaration, getExpenseAuditEvents, getDeclarationPdfUrl, patchExpenseNoReceiptReason, openApiDocument, apiLinkProps } from '../services/apiService';
+import AuthorizedFilePreview from './AuthorizedFilePreview';
 import Toast from './Toast';
 import { useToast } from '../hooks/useToast';
 import TrivialBenefitModal from './TrivialBenefitModal';
@@ -707,13 +708,9 @@ const Expenses = ({ openNew }) => {
         try {
             const attachments = await getExpenseAttachments(expense.id);
             if (attachments && attachments.length > 0) {
-                // Has a real receipt — open it normally
-                const apiBase = 'https://financehub-func-kemponline.azurewebsites.net/api';
-                const receiptUrl = `${apiBase}/expenses/${expense.id}/receipts/${attachments[0].fileName}`;
-                window.open(receiptUrl, '_blank');
+                await openApiDocument(`${API_BASE}/expenses/${expense.id}/receipts/${attachments[0].fileName}`);
             } else if (expense.hasMissingReceiptDeclaration) {
-                // No receipt but declaration on file — open declaration PDF
-                window.open(getDeclarationPdfUrl(expense.id), '_blank');
+                await openApiDocument(getDeclarationPdfUrl(expense.id));
             } else if (expense.noReceiptReason) {
                 // No receipt, no declaration — show reason modal
                 setNoReceiptInfoModal({ expense });
@@ -744,9 +741,7 @@ const Expenses = ({ openNew }) => {
     const handleDownloadPDF = async (expense) => {
         try {
             setProcessing(true);
-            const apiBase = 'https://financehub-func-kemponline.azurewebsites.net/api';
-            const pdfUrl = `${apiBase}/expenses/${expense.id}/claim-pdf`;
-            window.open(pdfUrl, '_blank');
+            await openApiDocument(`${API_BASE}/expenses/${expense.id}/claim-pdf`);
         } catch (error) {
             console.error('Error downloading PDF:', error);
             showToast('Failed to download PDF: ' + error.message, 'error');
@@ -1603,7 +1598,7 @@ const Expenses = ({ openNew }) => {
                             {editingExpense?.hasMissingReceiptDeclaration && (
                                 <div style={{ width: '100%', marginBottom: '0.75rem', padding: '0.75rem 1rem', background: '#f0f4ff', border: '1px solid #1565C0', borderRadius: 6, fontSize: '0.85rem', color: '#1565C0', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
                                     <span>📋 <strong>Missing Receipt Declaration on file</strong> — {editingExpense.missingReceiptDeclarationRef} · VAT set to £0.00</span>
-                                    <a href={getDeclarationPdfUrl(editingExpense.id)} target="_blank" rel="noreferrer" style={{ color: '#1565C0', fontWeight: 600, fontSize: '0.8rem' }}>View PDF ↗</a>
+                                    <a {...apiLinkProps(getDeclarationPdfUrl(editingExpense.id))} style={{ color: '#1565C0', fontWeight: 600, fontSize: '0.8rem' }}>View PDF ↗</a>
                                     <button type="button" onClick={() => {
                                         if (window.confirm('Void this declaration? VAT rules will no longer apply automatically.')) {
                                             handleVoidDeclaration(editingExpense, 'Voided by user');
@@ -1789,7 +1784,7 @@ const Expenses = ({ openNew }) => {
                                     </button>
                                     {expense.hasMissingReceiptDeclaration && (
                                         <button
-                                            onClick={() => window.open(getDeclarationPdfUrl(expense.id), '_blank')}
+                                            onClick={() => openApiDocument(getDeclarationPdfUrl(expense.id))}
                                             className="btn-icon"
                                             title={`Declaration on file: ${expense.missingReceiptDeclarationRef}`}
                                             style={{ marginLeft: '5px' }}
@@ -1902,7 +1897,7 @@ const Expenses = ({ openNew }) => {
                                 {!viewAttachmentsLoading && viewAttachments.length === 0 && viewExpense.hasMissingReceiptDeclaration && (
                                     <div style={{ padding: '0.6rem 0.9rem', background: '#f0f4ff', border: '1px solid #1565C0', borderRadius: 6, fontSize: '0.85rem', color: '#1565C0', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
                                         📋 <strong>Missing Receipt Declaration on file</strong> — {viewExpense.missingReceiptDeclarationRef}
-                                        <a href={getDeclarationPdfUrl(viewExpense.id)} target="_blank" rel="noreferrer" style={{ color: '#1565C0', fontWeight: 600, fontSize: '0.8rem', marginLeft: 'auto' }}>View Declaration PDF ↗</a>
+                                        <a {...apiLinkProps(getDeclarationPdfUrl(viewExpense.id))} style={{ color: '#1565C0', fontWeight: 600, fontSize: '0.8rem', marginLeft: 'auto' }}>View Declaration PDF ↗</a>
                                     </div>
                                 )}
                                 {!viewAttachmentsLoading && viewAttachments.length === 0 && !viewExpense.hasMissingReceiptDeclaration && viewExpense.noReceiptReason && (
@@ -1910,24 +1905,10 @@ const Expenses = ({ openNew }) => {
                                         ✅ <strong>No receipt — reason on file:</strong> {viewExpense.noReceiptReason}
                                     </div>
                                 )}
-                                {!viewAttachmentsLoading && viewAttachments.map((att, i) => {
-                                    const apiBase = 'https://financehub-func-kemponline.azurewebsites.net/api';
-                                    const url = `${apiBase}/expenses/${viewExpense.id}/receipts/${att.fileName}`;
-                                    const isPdf = att.fileName?.toLowerCase().endsWith('.pdf');
-                                    return (
-                                        <div key={i} style={{ marginBottom: '0.75rem' }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-                                                <span style={{ fontSize: '0.82rem', opacity: 0.7 }}>📎 {att.fileName}</span>
-                                                <a href={url} target="_blank" rel="noreferrer" style={{ fontSize: '0.78rem', color: '#0d6efd' }}>Open in new tab ↗</a>
-                                            </div>
-                                            {isPdf ? (
-                                                <iframe src={url} title={att.fileName} style={{ width: '100%', height: 420, border: '1px solid rgba(0,0,0,0.15)', borderRadius: 6 }} />
-                                            ) : (
-                                                <img src={url} alt={att.fileName} style={{ maxWidth: '100%', borderRadius: 6, border: '1px solid rgba(0,0,0,0.1)', display: 'block', cursor: 'zoom-in' }} onClick={() => window.open(url, '_blank')} />
-                                            )}
-                                        </div>
-                                    );
-                                })}
+                                {!viewAttachmentsLoading && viewAttachments.map((att, i) => (
+                                    <AuthorizedFilePreview key={i} fileName={att.fileName}
+                                        url={`${API_BASE}/expenses/${viewExpense.id}/receipts/${att.fileName}`} />
+                                ))}
                             </section>
 
                         </div>
@@ -1937,7 +1918,7 @@ const Expenses = ({ openNew }) => {
                                 <button className="btn-secondary" style={{ fontSize: '0.85rem' }} onClick={() => { setViewExpense(null); openDeclarationModal(viewExpense); }}>📋 Declaration</button>
                             )}
                             {viewExpense.hasMissingReceiptDeclaration && (
-                                <a href={getDeclarationPdfUrl(viewExpense.id)} target="_blank" rel="noreferrer" className="btn-secondary" style={{ fontSize: '0.85rem', textDecoration: 'none' }}>📎 View Declaration</a>
+                                <a {...apiLinkProps(getDeclarationPdfUrl(viewExpense.id))} className="btn-secondary" style={{ fontSize: '0.85rem', textDecoration: 'none' }}>📎 View Declaration</a>
                             )}
                             <button className="btn-secondary" style={{ fontSize: '0.85rem' }} onClick={() => { setViewExpense(null); handleEdit(viewExpense); }}>✏️ Edit</button>
                             <button className="btn-primary" style={{ fontSize: '0.85rem' }} onClick={() => setViewExpense(null)}>Close</button>

@@ -988,9 +988,14 @@ namespace FinanceHubFunctions.Functions
                     ? sigValues.FirstOrDefault() : null;
                 var bodyString = await new StreamReader(req.Body).ReadToEndAsync();
 
-                if (!string.IsNullOrEmpty(signature))
+                if (string.IsNullOrEmpty(signature))
                 {
-                    using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(webhookSecret));
+                    _logger.LogWarning("GoCardless webhook rejected: missing signature");
+                    return req.CreateResponse(HttpStatusCode.Unauthorized);
+                }
+
+                using (var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(webhookSecret)))
+                {
                     var computed = BitConverter.ToString(hmac.ComputeHash(Encoding.UTF8.GetBytes(bodyString)))
                         .Replace("-", "").ToLowerInvariant();
                     if (!CryptographicOperations.FixedTimeEquals(

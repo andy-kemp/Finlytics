@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     getCreditNotes, createCreditNote, sendCreditNoteEmail,
-    applyCreditNote, voidCreditNote, deleteCreditNote, getCreditNotePdfUrl,
+    applyCreditNote, voidCreditNote, deleteCreditNote, getCreditNotePdfUrl, apiLinkProps,
     getCustomers, getInvoices, getCompanySettings
 } from '../services/apiService';
 import Toast from './Toast';
@@ -438,7 +438,7 @@ export default function CreditNotes() {
                                         <td style={{ ...cellStyle, whiteSpace: 'nowrap' }}>
                                             <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                                                 {/* View PDF */}
-                                                <a href={getCreditNotePdfUrl(cn.id)} target="_blank" rel="noreferrer"
+                                                <a {...apiLinkProps(getCreditNotePdfUrl(cn.id))}
                                                     style={btnStyle('#f3f4f6', '#374151')}>
                                                     📄
                                                 </a>

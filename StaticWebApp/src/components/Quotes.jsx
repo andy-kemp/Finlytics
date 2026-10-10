@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getQuotes, createQuote, updateQuote, deleteQuote, getNextQuoteNumber, getCustomers, getLineItemDescriptions } from '../services/apiService';
+import { getQuotes, createQuote, updateQuote, deleteQuote, getNextQuoteNumber, getCustomers, getLineItemDescriptions, openApiDocument } from '../services/apiService';
 import Toast from './Toast';
 import { useToast } from '../hooks/useToast';
 import AutocompleteInput from './AutocompleteInput';
@@ -144,9 +144,7 @@ export default function Quotes() {
 
   const handleViewPdf = async (quoteId, quoteNumber) => {
     try {
-      // Open the PDF in a new window
-      const pdfUrl = `${API_BASE}/quotes/${quoteId}/pdf`;
-      window.open(pdfUrl, '_blank');
+      await openApiDocument(`${API_BASE}/quotes/${quoteId}/pdf`);
     } catch (error) {
       console.error('Error viewing PDF:', error);
       showToast('Failed to open PDF', 'error');

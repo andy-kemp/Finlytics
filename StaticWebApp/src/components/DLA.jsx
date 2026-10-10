@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getAuthHeaders, getCompanySettings, getDlaEntries, getDlaPayments, getAllDlaPayments, getCompanyDocuments, uploadDocument, deleteDocument, downloadDocument, analyzeInvoice, getSuppliers, createSupplier, generateCode, getTrivialBenefitSummary, getDlaDeclaration, createDlaDeclaration, finaliseDlaDeclaration, voidDlaDeclaration, getDlaDeclarationPdfUrl, patchDlaNoReceiptReason } from '../services/apiService';
+import { getAuthHeaders, getCompanySettings, getDlaEntries, getDlaPayments, getAllDlaPayments, getCompanyDocuments, uploadDocument, deleteDocument, downloadDocument, analyzeInvoice, getSuppliers, createSupplier, generateCode, getTrivialBenefitSummary, getDlaDeclaration, createDlaDeclaration, finaliseDlaDeclaration, voidDlaDeclaration, getDlaDeclarationPdfUrl, patchDlaNoReceiptReason, openApiDocument, apiLinkProps } from '../services/apiService';
 import { calculateDlaCompliance } from '../services/dlaRules';
 import Toast from './Toast';
 import { useToast } from '../hooks/useToast';
@@ -197,8 +197,8 @@ const DLA = ({ openNew }) => {
             const [dlaData, settingsData, categoriesData, paymentMethodsData, documentsData, suppliersData] = await Promise.all([
                 getDlaEntries().catch(() => []),
                 getCompanySettings().catch(() => null),
-                fetch(`${API_BASE_URL}/categories`).then(r => r.json()).catch(() => []),
-                fetch(`${API_BASE_URL}/paymentmethods`).then(r => r.json()).catch(() => []),
+                fetch(`${API_BASE_URL}/categories`, { headers: await getAuthHeaders() }).then(r => r.json()).catch(() => []),
+                fetch(`${API_BASE_URL}/paymentmethods`, { headers: await getAuthHeaders() }).then(r => r.json()).catch(() => []),
                 getCompanyDocuments().catch(() => []),
                 getSuppliers().catch(() => [])
             ]);
@@ -1016,7 +1016,7 @@ const DLA = ({ openNew }) => {
         // No receipt attached — route to declaration PDF or reason info
         if (!entry.receiptUrl) {
             if (entry.hasMissingReceiptDeclaration) {
-                window.open(getDlaDeclarationPdfUrl(entry.id), '_blank');
+                await openApiDocument(getDlaDeclarationPdfUrl(entry.id));
             } else if (entry.noReceiptReason) {
                 setNoReceiptInfoModal({ entry });
             } else {
@@ -2232,7 +2232,7 @@ const DLA = ({ openNew }) => {
                                 {editingEntry?.hasMissingReceiptDeclaration && (
                                     <div style={{ gridColumn: '1 / -1', background: '#eff6ff', border: '1px solid #3b82f6', borderRadius: 6, padding: '0.6rem 0.9rem', fontSize: '0.82rem', color: '#1e40af', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.4rem' }}>
                                         <span>📋 <strong>Missing Receipt Declaration on file</strong> — {editingEntry.missingReceiptDeclarationRef}</span>
-                                        <a href={getDlaDeclarationPdfUrl(editingEntry.id)} target="_blank" rel="noreferrer" style={{ color: '#1e40af', fontSize: '0.78rem', textDecoration: 'underline' }}>View PDF ↗</a>
+                                        <a {...apiLinkProps(getDlaDeclarationPdfUrl(editingEntry.id))} style={{ color: '#1e40af', fontSize: '0.78rem', textDecoration: 'underline' }}>View PDF ↗</a>
                                     </div>
                                 )}
                                 {editingEntry?.noReceiptReason && !editingEntry?.hasMissingReceiptDeclaration && (
@@ -3119,7 +3119,7 @@ const DLA = ({ openNew }) => {
                                 ) : viewingEntry.hasMissingReceiptDeclaration ? (
                                     <div style={{ padding: '0.6rem 0.9rem', background: '#f0f4ff', border: '1px solid #1565C0', borderRadius: 6, fontSize: '0.85rem', color: '#1565C0', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
                                         📋 <strong>Missing Receipt Declaration on file</strong> — {viewingEntry.missingReceiptDeclarationRef}
-                                        <a href={getDlaDeclarationPdfUrl(viewingEntry.id)} target="_blank" rel="noreferrer" style={{ color: '#1565C0', fontWeight: 600, fontSize: '0.8rem', marginLeft: 'auto' }}>View Declaration PDF ↗</a>
+                                        <a {...apiLinkProps(getDlaDeclarationPdfUrl(viewingEntry.id))} style={{ color: '#1565C0', fontWeight: 600, fontSize: '0.8rem', marginLeft: 'auto' }}>View Declaration PDF ↗</a>
                                     </div>
                                 ) : viewingEntry.noReceiptReason ? (
                                     <div style={{ padding: '0.6rem 0.9rem', background: '#f0fdf4', border: '1px solid #22c55e', borderRadius: 6, fontSize: '0.85rem', color: '#15803d' }}>
@@ -3136,7 +3136,7 @@ const DLA = ({ openNew }) => {
                                 <button className="btn-secondary" style={{ fontSize: '0.85rem' }} onClick={() => { setViewingEntry(null); openDlaDeclarationModal(viewingEntry); }}>📋 Declaration</button>
                             )}
                             {viewingEntry.hasMissingReceiptDeclaration && (
-                                <a href={getDlaDeclarationPdfUrl(viewingEntry.id)} target="_blank" rel="noreferrer" className="btn-secondary" style={{ fontSize: '0.85rem', textDecoration: 'none' }}>📎 View Declaration</a>
+                                <a {...apiLinkProps(getDlaDeclarationPdfUrl(viewingEntry.id))} className="btn-secondary" style={{ fontSize: '0.85rem', textDecoration: 'none' }}>📎 View Declaration</a>
                             )}
                             <button className="btn-secondary" style={{ fontSize: '0.85rem' }} onClick={() => { openPaymentHistory(viewingEntry); }}>📜 Payment History</button>
                             {viewingEntry.remainingBalance > 0 && (
@@ -3618,7 +3618,7 @@ const DLA = ({ openNew }) => {
                                         <button onClick={() => handleViewReceipts(entry)} className="btn-icon" title="View Receipts" style={{marginLeft: '5px'}}>📎</button>
                                     )}
                                     {!entry.receiptUrl && entry.hasMissingReceiptDeclaration && (
-                                        <button onClick={() => window.open(getDlaDeclarationPdfUrl(entry.id), '_blank')} className="btn-icon" title={`Declaration on file: ${entry.missingReceiptDeclarationRef}`} style={{marginLeft: '5px'}}>📎</button>
+                                        <button onClick={() => openApiDocument(getDlaDeclarationPdfUrl(entry.id))} className="btn-icon" title={`Declaration on file: ${entry.missingReceiptDeclarationRef}`} style={{marginLeft: '5px'}}>📎</button>
                                     )}
                                     {!entry.receiptUrl && !entry.hasMissingReceiptDeclaration && !entry.noReceiptReason && (
                                         <button onClick={() => openDlaDeclarationModal(entry)} className="btn-icon" title="Create Missing Receipt Declaration" style={{ marginLeft: '5px', opacity: 0.5 }}>📋</button>
@@ -3777,7 +3777,7 @@ const DLA = ({ openNew }) => {
                                                 <button onClick={() => handleViewReceipts(entry)} className="btn-icon" title="View Receipts" style={{marginLeft: '5px'}}>📎</button>
                                             )}
                                             {!entry.receiptUrl && entry.hasMissingReceiptDeclaration && (
-                                                <button onClick={() => window.open(getDlaDeclarationPdfUrl(entry.id), '_blank')} className="btn-icon" title={`Declaration on file: ${entry.missingReceiptDeclarationRef}`} style={{marginLeft: '5px'}}>📎</button>
+                                                <button onClick={() => openApiDocument(getDlaDeclarationPdfUrl(entry.id))} className="btn-icon" title={`Declaration on file: ${entry.missingReceiptDeclarationRef}`} style={{marginLeft: '5px'}}>📎</button>
                                             )}
                                             {!entry.receiptUrl && !entry.hasMissingReceiptDeclaration && !entry.noReceiptReason && (
                                                 <button onClick={() => openDlaDeclarationModal(entry)} className="btn-icon" title="Create Missing Receipt Declaration" style={{ marginLeft: '5px', opacity: 0.5 }}>📋</button>

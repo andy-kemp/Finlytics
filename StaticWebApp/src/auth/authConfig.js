@@ -24,7 +24,9 @@ export const loginRequest = {
         "openid",
         "profile",
         "email"
-    ]
+    ],
+    // Consent to the Finlytics API at sign-in so API tokens can be acquired silently.
+    extraScopesToConsent: import.meta.env.VITE_SETTLEMENT_API_SCOPE ? [import.meta.env.VITE_SETTLEMENT_API_SCOPE] : []
 };
 
 export const sharePointRequest = {
