@@ -4,6 +4,7 @@ import QuickInvoice from './QuickInvoice';
 import PotBalancePanel from './PotBalancePanel';
 import BankAttentionPanel from './BankAttentionPanel';
 import { bankAttention } from '../utils/bankAttention.mjs';
+import { unclaimedExpenses } from '../utils/unclaimedExpenses.mjs';
 import { calculateAvailableAfterTax, calculateBookCashWithPots } from '../utils/potBalances.mjs';
 import { calculateRecordedTradingCash } from '../utils/cashCalculations.mjs';
 import { calculateMainAccountBookBalance, loadMainAccountCashBaseline } from '../utils/cashBaseline.mjs';
@@ -374,6 +375,7 @@ export default function Dashboard({ onNavigate }) {
 
             setMetrics({
                 outstandingPayments, outstandingPaymentsError,
+                unclaimedExpenses: unclaimedExpenses(outstandingPayments, outstandingPaymentsError),
                 potSnapshot, potBalanceError, bookCashWithPots, availableAfterTax,
                 income, incomeNet, incomeVAT,
                 billedTotal,
@@ -915,6 +917,24 @@ export default function Dashboard({ onNavigate }) {
                         </div>
                     </div>
                 </div>
+
+                <button type="button" className="metric-card expenses" disabled={!onNavigate}
+                    style={{ textAlign: 'left', fontFamily: 'inherit', border: 'none', borderLeft: '4px solid #dc3545', minWidth: 0, cursor: onNavigate ? 'pointer' : 'default' }}
+                    onClick={() => onNavigate('banking', { reviewAccountId: metrics.cashBaseline?.bankAccountId })}
+                    aria-label="Unclaimed Expenses: review bank payments and upload receipts">
+                    <div className="metric-icon" aria-hidden="true">🧾</div>
+                    <div className="metric-content">
+                        <div className="metric-label">Unclaimed Expenses</div>
+                        <div className={`metric-value ${metrics.unclaimedExpenses?.amount > 0 ? 'negative' : ''}`}>
+                            {metrics.unclaimedExpenses ? formatCurrency(metrics.unclaimedExpenses.amount) : 'Unavailable'}
+                        </div>
+                        <div className="metric-detail">
+                            {metrics.unclaimedExpenses
+                                ? `${metrics.unclaimedExpenses.count} bank payment${metrics.unclaimedExpenses.count === 1 ? '' : 's'} not logged as expenses`
+                                : metrics.outstandingPaymentsError || 'Bank payment duplicates need review'}
+                        </div>
+                    </div>
+                </button>
 
                 <div className="metric-card cashflow">
                     <div className="metric-icon">📈</div>

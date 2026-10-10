@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { bankAttention } from './bankAttention.mjs';
+import { unclaimedExpenses } from './unclaimedExpenses.mjs';
 import { buildMonthlyProposals, buildMonthlyApplyRequest, selectPaymentForReview } from './monthlyReconciliation.mjs';
 
 const payments = [
@@ -17,6 +18,23 @@ test('dashboard uses saved bank payments without requiring a new sync or CSV imp
     const recorded = bankAttention(payments, { expenses: [{ id: 60, datePaid: '2026-10-09', amountGross: 6.20 }] }, '2026-10-03');
     assert.equal(recorded.missing.length, 2);
     assert.equal(recorded.moneyOut, 46.95);
+});
+
+test('unclaimed expense tile counts only unrecorded money out and stays unavailable for uncertain data', () => {
+    const rows = [...payments, { ...payments[0], id: 72, amount: 100, direction: 'In' },
+        { ...payments[0], id: 73, category: 'Internal Transfer' }];
+    const attention = bankAttention(rows, {}, '2026-10-03');
+    assert.deepEqual(unclaimedExpenses(attention), { count: 3, amount: 53.15 });
+    assert.equal(unclaimedExpenses(attention, 'Bank unavailable'), null);
+    assert.equal(unclaimedExpenses(null), null);
+    assert.equal(unclaimedExpenses({ ...attention, moneyOut: null }), null);
+    assert.deepEqual(unclaimedExpenses(bankAttention([], {}, '2026-10-03')), { count: 0, amount: 0 });
+    const recorded = bankAttention(payments, { expenses: [{ id: 60, datePaid: '2026-10-09', amountGross: 6.20 }] }, '2026-10-03');
+    assert.deepEqual(unclaimedExpenses(recorded), { count: 2, amount: 46.95 });
+    const dashboard = readFileSync(new URL('../components/Dashboard.jsx', import.meta.url), 'utf8');
+    assert.ok(dashboard.includes('<div className="metric-label">Unclaimed Expenses</div>'));
+    assert.ok(dashboard.includes("onNavigate('banking', { reviewAccountId: metrics.cashBaseline?.bankAccountId })"));
+    assert.ok(dashboard.includes("metrics.unclaimedExpenses.count === 1 ? '' : 's'"));
 });
 
 test('dashboard review action selects only the clicked payment and preserves its existing feed ID', () => {
