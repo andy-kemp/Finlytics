@@ -64,7 +64,7 @@ namespace FinanceHubFunctions.Functions
             if (clerkUser == null)
             {
                 var resp = req.CreateResponse(HttpStatusCode.Unauthorized);
-                await resp.WriteAsJsonAsync(new { error = "Invalid or missing authentication token" });
+                await resp.WriteAsJsonAsync(new { error = "Invalid or missing authentication token" }, HttpStatusCode.Unauthorized);
                 return (null, resp);
             }
 
@@ -72,7 +72,7 @@ namespace FinanceHubFunctions.Functions
             if (member == null || member.Status != "Active")
             {
                 var resp = req.CreateResponse(HttpStatusCode.Forbidden);
-                await resp.WriteAsJsonAsync(new { error = "You are not an active team member" });
+                await resp.WriteAsJsonAsync(new { error = "You are not an active team member" }, HttpStatusCode.Forbidden);
                 return (null, resp);
             }
 
@@ -556,7 +556,7 @@ namespace FinanceHubFunctions.Functions
             if (clerkUser == null)
             {
                 var unauth = req.CreateResponse(HttpStatusCode.Unauthorized);
-                await unauth.WriteAsJsonAsync(new { error = "Invalid authentication" });
+                await unauth.WriteAsJsonAsync(new { error = "Invalid authentication" }, HttpStatusCode.Unauthorized);
                 return unauth;
             }
 

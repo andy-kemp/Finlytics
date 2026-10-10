@@ -91,14 +91,14 @@ namespace FinanceHubFunctions.Functions
         private static async Task<HttpResponseData> Unauthorized(HttpRequestData req, string msg = "Unauthorized")
         {
             var res = req.CreateResponse(HttpStatusCode.Unauthorized);
-            await res.WriteAsJsonAsync(new { error = msg });
+            await res.WriteAsJsonAsync(new { error = msg }, HttpStatusCode.Unauthorized);
             return res;
         }
 
         private static async Task<HttpResponseData> Forbidden(HttpRequestData req, string msg = "Access denied")
         {
             var res = req.CreateResponse(HttpStatusCode.Forbidden);
-            await res.WriteAsJsonAsync(new { error = msg });
+            await res.WriteAsJsonAsync(new { error = msg }, HttpStatusCode.Forbidden);
             return res;
         }
 
