@@ -2937,13 +2937,6 @@ export async function getMonzoAuthUrl() {
     return response.json(); // { authUrl }
 }
 
-export async function getMonzoBalance() {
-    const headers = await getAuthHeaders();
-    const response = await fetch(`${API_BASE}/monzo/balance`, { headers });
-    if (!response.ok) throw new Error('Failed to get Monzo balance');
-    return response.json();
-}
-
 // ═══════════════════════════════════════════════════════════
 //  REPORTS
 // ═══════════════════════════════════════════════════════════
@@ -2995,19 +2988,12 @@ export async function getAuditTrail(params = {}) {
     return response.json();
 }
 
-export async function syncMonzoTransactions(since = null) {
+export async function syncMonzoTransactions() {
     const headers = await getAuthHeaders();
-    const body = since ? JSON.stringify({ since }) : null;
-    const response = await fetch(`${API_BASE}/monzo/sync`, {
-        method: 'POST',
-        headers: { ...headers, 'Content-Type': 'application/json' },
-        body
-    });
-    if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || 'Monzo sync failed');
-    }
-    return response.json();
+    const response = await fetch(`${API_BASE}/monzo/sync`, { method: 'POST', headers });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Monzo sync failed');
+    return result;
 }
 
 // ── TrueLayer ─────────────────────────────────────────────────────────────────

@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <NoWarn>CS8618</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Helpers/MonzoSyncPolicy.cs" Link="MonzoSyncPolicy.cs" />
+    <Compile Include="../../Helpers/CashBaselinePolicy.cs" Link="CashBaselinePolicy.cs" />
+    <Compile Include="../../Helpers/CashBaselineAmendmentPolicy.cs" Link="CashBaselineAmendmentPolicy.cs" />
+    <Compile Include="../../Models/Invoice.cs" Link="Invoice.cs" />
+    <Compile Include="../../Models/Expense.cs" Link="Expense.cs" />
+    <Compile Include="../../Models/IForeignCurrencyRecord.cs" Link="IForeignCurrencyRecord.cs" />
+    <Compile Include="../../Models/DlaEntry.cs" Link="DlaEntry.cs" />
+    <Compile Include="../../Models/DlaPayment.cs" Link="DlaPayment.cs" />
+    <Compile Include="../../Models/CompanyLedgerEntry.cs" Link="CompanyLedgerEntry.cs" />
+    <Compile Include="../../Models/BankAccount.cs" Link="BankAccount.cs" />
+    <Compile Include="../../Models/BankTransaction.cs" Link="BankTransaction.cs" />
+    <Compile Include="../../Models/PayrollSettings.cs" Link="PayrollSettings.cs" />
+    <Compile Include="../../Models/PayrollRun.cs" Link="PayrollRun.cs" />
+  </ItemGroup>
+</Project>

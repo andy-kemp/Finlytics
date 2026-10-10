@@ -291,7 +291,10 @@ export default function Dashboard({ onNavigate }) {
             const ctYtdExpenses = expenses.filter(exp =>
                 !exp.isDLA && exp.entryDate && new Date(exp.entryDate) >= ctYtdStart);
 
-            const ctIncomeNet   = ctYtdPaidInvoices.reduce((sum, inv) => sum + (inv.amountNet || 0), 0);
+            const ctBankInterest = ledgerEntries
+                .filter(e => e.entryType === 'Interest_Received' && e.effectiveDate && new Date(e.effectiveDate) >= ctYtdStart)
+                .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+            const ctIncomeNet   = ctYtdPaidInvoices.reduce((sum, inv) => sum + (inv.amountNet || 0), 0) + ctBankInterest;
             const ctAllowableExpenseNet = ctYtdExpenses
                 .filter(exp => exp.ctTag !== 'NonCT')
                 .reduce((sum, exp) => sum + (exp.amountNet || 0), 0);
@@ -380,6 +383,7 @@ export default function Dashboard({ onNavigate }) {
                 dlaOwedToCompany,
                 dlaVatReclaimable,
                 ctIncomeNet,
+                ctBankInterest,
                 ctAllowableExpenseNet,
                 ctAllowableDlaNet,
                 currentBalance, tradingProfit, profitBeforeTax,
@@ -1094,6 +1098,12 @@ export default function Dashboard({ onNavigate }) {
                             <span>Income (net, excl. VAT):</span>
                             <span>{formatCurrency(metrics.ctIncomeNet)}</span>
                         </div>
+                        {metrics.ctBankInterest > 0 && (
+                            <div className="info-row" style={{fontSize: '0.9rem'}}>
+                                <span>Includes bank interest (taxable):</span>
+                                <span>{formatCurrency(metrics.ctBankInterest)}</span>
+                            </div>
+                        )}
                         <div className="info-row">
                             <span>Less: CT-allowable expenses:</span>
                             <span>-{formatCurrency(metrics.ctAllowableExpenseNet)}</span>
@@ -1336,6 +1346,12 @@ export default function Dashboard({ onNavigate }) {
                                 <td style={{ padding:'7px 4px', color:'#495057' }}>Income (net, excl. VAT)</td>
                                 <td style={{ padding:'7px 4px', textAlign:'right', fontWeight:500 }}>{formatCurrency(metrics.ctIncomeNet)}</td>
                             </tr>
+                            {metrics.ctBankInterest > 0 && (
+                                <tr style={{ borderBottom:'1px solid #f0f0f0' }}>
+                                    <td style={{ padding:'7px 4px', color:'#6c757d', fontSize:'0.85rem' }}>Includes bank interest from pots</td>
+                                    <td style={{ padding:'7px 4px', textAlign:'right', color:'#6c757d', fontSize:'0.85rem' }}>{formatCurrency(metrics.ctBankInterest)}</td>
+                                </tr>
+                            )}
                             <tr style={{ borderBottom:'1px solid #f0f0f0' }}>
                                 <td style={{ padding:'7px 4px', color:'#495057' }}>Less: CT-allowable expenses</td>
                                 <td style={{ padding:'7px 4px', textAlign:'right', color:'#dc3545' }}>−{formatCurrency(metrics.ctAllowableExpenseNet)}</td>

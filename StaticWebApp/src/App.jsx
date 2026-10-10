@@ -71,7 +71,7 @@ function App() {
 function MainContent() {
     const { instance } = useMsal();
     const isMobileDevice = () => window.innerWidth <= 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    const [view, setView] = useState(() => isMobileDevice() ? 'mobile-home' : 'dashboard');
+    const [view, setView] = useState(() => window.location.pathname === '/banking' ? 'banking' : (isMobileDevice() ? 'mobile-home' : 'dashboard'));
     const [viewOptions, setViewOptions] = useState({});
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [isAuthenticated, setIsAuthenticated] = useState(null);

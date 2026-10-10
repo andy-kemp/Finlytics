@@ -6,7 +6,23 @@ import { parseBankCsv, previewBankImport } from '../utils/bankCsv.mjs';
 import { compareBankToApp } from '../utils/bankReconciliation.mjs';
 import { buildMonthlyApplyRequest, buildMonthlyProposals } from '../utils/monthlyReconciliation.mjs';
 import { getInvoices, getExpenses, getDlaEntries, getAllDlaPayments, getCompanyLedger, confirmExpenseGbpSettlement, getCategories, getCashBaseline, getReceiptInbox, applyMonthlyReconciliation } from '../services/apiService';
-import { getBankAccounts, createBankAccount, updateBankAccount, deleteBankAccount, getBankTransactionsByAccount, createBankTransaction, importBankTransactions, getTrueLayerStatus, getTrueLayerAuthUrl, syncTrueLayerTransactions, disconnectTrueLayer, getGoCardlessInstitutions, connectBankGoCardless, syncGoCardlessTransactions, getGoCardlessBankStatus } from '../services/apiService';
+import { getBankAccounts, createBankAccount, updateBankAccount, deleteBankAccount, getBankTransactionsByAccount, createBankTransaction, importBankTransactions, getTrueLayerStatus, getTrueLayerAuthUrl, syncTrueLayerTransactions, disconnectTrueLayer, getGoCardlessInstitutions, connectBankGoCardless, syncGoCardlessTransactions, getGoCardlessBankStatus, getMonzoStatus, getMonzoAuthUrl, syncMonzoTransactions } from '../services/apiService';
+
+// TrueLayer and GoCardless bank feeds are parked in favour of the direct Monzo API.
+const legacyBankFeeds = import.meta.env.VITE_ENABLE_LEGACY_BANK_FEEDS === 'true';
+const monzoErrors = {
+    cancelled: 'Monzo connection was cancelled.',
+    invalid_state: 'Monzo connection link expired or was tampered with. Please try again.',
+    token_exchange_failed: 'Monzo rejected the authorisation code. Please try again.',
+    callback_failed: 'Monzo connection failed. Please try again.'
+};
+
+function describeMonzoSync(result) {
+    const parts = [`Monzo synced: ${result.imported} new, ${result.linked} matched to existing rows`];
+    if (result.vatPot != null || result.ctPot != null) parts.push(`VAT pot £${Number(result.vatPot ?? 0).toFixed(2)}, CT pot £${Number(result.ctPot ?? 0).toFixed(2)}`);
+    for (const interest of result.interestRecorded || []) parts.push(`interest £${Number(interest.residual).toFixed(2)} recorded on ${interest.potName}`);
+    return parts.join(' · ');
+}
 
 const defaultAccount = {
     accountName: '',
@@ -50,6 +66,9 @@ export default function Banking() {
     const [csvImporting, setCsvImporting] = useState(false);
     const [csvPreview, setCsvPreview] = useState(null);
     const [inboxVersion, setInboxVersion] = useState(0);
+    const [monzoStatus, setMonzoStatus] = useState(null);
+    const [monzoSyncing, setMonzoSyncing] = useState(false);
+    const [monzoWarnings, setMonzoWarnings] = useState([]);
     const ownerApi = Boolean(import.meta.env.VITE_SETTLEMENT_API_SCOPE);
     const csvInputRef = useRef(null);
 
@@ -59,10 +78,20 @@ export default function Banking() {
 
     useEffect(() => {
         loadAccounts();
-        getTrueLayerStatus().then(setTrueLayerStatus).catch(() => setTrueLayerStatus({ connected: false }));
+        if (legacyBankFeeds) getTrueLayerStatus().then(setTrueLayerStatus).catch(() => setTrueLayerStatus({ connected: false }));
+        loadMonzoStatus();
 
         // Handle redirect back from TrueLayer OAuth
         const params = new URLSearchParams(window.location.search);
+        if (params.get('monzo_connected') === 'true') {
+            setSyncResult(params.get('refresh') === 'missing'
+                ? { success: false, message: 'Monzo connected, but no refresh token was issued, so the daily sync will stop working after a few hours. Make the Monzo OAuth client "Confidential" and reconnect.' }
+                : { success: true, message: 'Monzo connected. Approve Finlytics in the Monzo app, then press Sync now.' });
+            window.history.replaceState({}, '', window.location.pathname);
+        } else if (params.get('monzo_error')) {
+            setSyncResult({ success: false, message: monzoErrors[params.get('monzo_error')] || 'Monzo connection failed.' });
+            window.history.replaceState({}, '', window.location.pathname);
+        }
         if (params.get('truelayer_connected') === 'true') {
             setSyncResult({ success: true, message: 'Bank connected via TrueLayer!' });
             window.history.replaceState({}, '', window.location.pathname);
@@ -102,7 +131,7 @@ export default function Banking() {
                 }
             } catch { /* ignore */ }
         };
-        const onResume = () => { if (document.visibilityState === 'visible') checkPendingAuth(); };
+        const onResume = () => { if (document.visibilityState === 'visible') { checkPendingAuth(); loadMonzoStatus(); } };
         document.addEventListener('visibilitychange', onResume);
         window.addEventListener('focus', checkPendingAuth);
 
@@ -114,6 +143,39 @@ export default function Banking() {
             window.removeEventListener('focus', checkPendingAuth);
         };
     }, []);
+
+    async function loadMonzoStatus() {
+        try {
+            setMonzoStatus(await getMonzoStatus());
+        } catch {
+            setMonzoStatus({ configured: false, connected: false, unavailable: true });
+        }
+    }
+
+    const handleMonzoConnect = async () => {
+        try {
+            const { authUrl } = await getMonzoAuthUrl();
+            window.location.href = authUrl;
+        } catch (err) {
+            setSyncResult({ success: false, message: 'Could not start Monzo connection: ' + err.message });
+        }
+    };
+
+    const handleMonzoSync = async () => {
+        setMonzoSyncing(true);
+        setSyncResult(null);
+        try {
+            const result = await syncMonzoTransactions();
+            setMonzoWarnings(result.warnings || []);
+            setSyncResult({ success: true, message: describeMonzoSync(result) });
+            await loadAccounts();
+        } catch (err) {
+            setSyncResult({ success: false, message: err.message });
+        } finally {
+            setMonzoSyncing(false);
+            loadMonzoStatus();
+        }
+    };
 
     async function loadAccounts() {
         try {
@@ -462,8 +524,55 @@ export default function Banking() {
                 </button>
             </div>
 
+            {/* ── Monzo Panel ── */}
+            {monzoStatus && (
+                <div style={{
+                    background: monzoStatus.connected ? '#f0fdf4' : '#fff7ed',
+                    border: `1px solid ${monzoStatus.connected ? '#bbf7d0' : '#fed7aa'}`,
+                    borderRadius: 10, padding: '1rem 1.25rem', marginBottom: '1.25rem'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+                        <div>
+                            <div style={{ fontWeight: 700, fontSize: '0.95rem', color: monzoStatus.connected ? '#15803d' : '#9a3412' }}>
+                                {monzoStatus.connected ? '✓ Monzo connected' : monzoStatus.configured === false ? 'Monzo not configured' : 'Monzo needs reconnecting'}
+                            </div>
+                            <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: 2 }}>
+                                {monzoStatus.connected
+                                    ? 'Transactions and pot balances sync automatically every morning; pot interest is recorded as taxable income.'
+                                    : monzoStatus.unavailable
+                                        ? 'Could not check the Monzo connection.'
+                                        : monzoStatus.message || 'Connect Monzo, then approve Finlytics in the Monzo app.'}
+                                {monzoStatus.lastSyncedAt && (
+                                    <span> · Last sync: {new Date(monzoStatus.lastSyncedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                                )}
+                                {monzoStatus.connected && monzoStatus.canRefresh === false && (
+                                    <span style={{ color: '#dc2626', fontWeight: 600 }}> · No refresh token: the daily sync will stop when access expires.</span>
+                                )}
+                            </div>
+                        </div>
+                        {monzoStatus.configured !== false && !monzoStatus.unavailable && (
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                {monzoStatus.connected && (
+                                    <button className="btn-primary" onClick={handleMonzoSync} disabled={monzoSyncing || csvImporting}>
+                                        {monzoSyncing ? '⏳ Syncing…' : '🔄 Sync now'}
+                                    </button>
+                                )}
+                                <button className={monzoStatus.connected ? 'btn-secondary' : 'btn-primary'} onClick={handleMonzoConnect} disabled={monzoSyncing}>
+                                    {monzoStatus.connected ? 'Reconnect' : '🔗 Connect Monzo'}
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                    {monzoWarnings.length > 0 && (
+                        <ul style={{ margin: '0.6rem 0 0', paddingLeft: '1.2rem', fontSize: '0.8rem', color: '#9a3412' }}>
+                            {monzoWarnings.map(warning => <li key={warning}>{warning}</li>)}
+                        </ul>
+                    )}
+                </div>
+            )}
+
             {/* ── Open Banking Panel ── */}
-            {trueLayerStatus && (
+            {legacyBankFeeds && trueLayerStatus && (
                 <div style={{
                     background: trueLayerStatus.connected ? '#eff6ff' : '#fafafa',
                     border: `1px solid ${trueLayerStatus.connected ? '#bfdbfe' : '#e5e7eb'}`,
@@ -550,7 +659,7 @@ export default function Banking() {
             )}
 
             {/* ── GoCardless Bank Institution Picker ── */}
-            {showGcPicker && (
+            {legacyBankFeeds && showGcPicker && (
                 <div style={{
                     background: '#f9fafb', border: '1px solid #e5e7eb',
                     borderRadius: 10, padding: '1rem 1.25rem', marginBottom: '1.25rem'
@@ -670,7 +779,7 @@ export default function Banking() {
                                         <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                                             <button className="btn-secondary" onClick={() => handleEditAccount(account)}>Edit</button>
                                             <button className="btn-danger" onClick={() => handleDeleteAccount(account)}>Delete</button>
-                                            {account.goCardlessConnected ? (
+                                            {legacyBankFeeds && (account.goCardlessConnected ? (
                                                 <button
                                                     className="btn-secondary"
                                                     disabled={gcSyncing}
@@ -687,7 +796,7 @@ export default function Banking() {
                                                 >
                                                     🔗 Connect GC
                                                 </button>
-                                            )}
+                                            ))}
                                         </div>
                                     </td>
                                 </tr>
