@@ -4,8 +4,11 @@ import MonthlyReconciliationReview from './MonthlyReconciliationReview';
 import ReceiptInbox from './ReceiptInbox';
 import { parseBankCsv, previewBankImport } from '../utils/bankCsv.mjs';
 import { compareBankToApp } from '../utils/bankReconciliation.mjs';
+import { bankAttention } from '../utils/bankAttention.mjs';
+import { calculateRecordedTradingCash } from '../utils/cashCalculations.mjs';
+import { mainAccountBookBreakdown } from '../utils/cashBaseline.mjs';
 import { buildMonthlyApplyRequest, buildMonthlyProposals } from '../utils/monthlyReconciliation.mjs';
-import { getInvoices, getExpenses, getDlaEntries, getAllDlaPayments, getCompanyLedger, confirmExpenseGbpSettlement, getCategories, getCashBaseline, getReceiptInbox, applyMonthlyReconciliation } from '../services/apiService';
+import { getInvoices, getExpenses, getDlaEntries, getAllDlaPayments, getCompanyLedger, confirmExpenseGbpSettlement, getCategories, getCashBaseline, getReceiptInbox, applyMonthlyReconciliation, getPayrollSettings, getPayrollRuns } from '../services/apiService';
 import { getBankAccounts, createBankAccount, updateBankAccount, deleteBankAccount, getBankTransactionsByAccount, createBankTransaction, importBankTransactions, getTrueLayerStatus, getTrueLayerAuthUrl, syncTrueLayerTransactions, disconnectTrueLayer, getGoCardlessInstitutions, connectBankGoCardless, syncGoCardlessTransactions, getGoCardlessBankStatus, getMonzoStatus, getMonzoAuthUrl, syncMonzoTransactions } from '../services/apiService';
 
 // TrueLayer and GoCardless bank feeds are parked in favour of the direct Monzo API.
@@ -18,7 +21,8 @@ const monzoErrors = {
 };
 
 function describeMonzoSync(result) {
-    const parts = [`Monzo synced: ${result.imported} new, ${result.linked} matched to existing rows`];
+    const parts = [`Monzo synced: ${result.imported} new, ${result.linked} linked, ${result.unchanged ?? 0} already imported`];
+    if (result.fetched != null) parts.push(`${result.fetched} fetched from Monzo`);
     if (result.vatPot != null || result.ctPot != null) parts.push(`VAT pot £${Number(result.vatPot ?? 0).toFixed(2)}, CT pot £${Number(result.ctPot ?? 0).toFixed(2)}`);
     for (const interest of result.interestRecorded || []) parts.push(`interest £${Number(interest.residual).toFixed(2)} recorded on ${interest.potName}`);
     return parts.join(' · ');
@@ -69,6 +73,10 @@ export default function Banking() {
     const [monzoStatus, setMonzoStatus] = useState(null);
     const [monzoSyncing, setMonzoSyncing] = useState(false);
     const [monzoWarnings, setMonzoWarnings] = useState([]);
+    const [attention, setAttention] = useState(null);
+    const [attentionError, setAttentionError] = useState(null);
+    const [monzoBalance, setMonzoBalance] = useState(null);
+    const transactionLoadVersion = useRef(0);
     const ownerApi = Boolean(import.meta.env.VITE_SETTLEMENT_API_SCOPE);
     const csvInputRef = useRef(null);
 
@@ -167,8 +175,10 @@ export default function Banking() {
         try {
             const result = await syncMonzoTransactions();
             setMonzoWarnings(result.warnings || []);
-            setSyncResult({ success: true, message: describeMonzoSync(result) });
-            await loadAccounts();
+            setMonzoBalance(result.mainAccountBalance == null ? null : Number(result.mainAccountBalance));
+            const review = await loadAccounts();
+            setSyncResult({ success: true, message: describeMonzoSync(result)
+                + (review ? ` · ${review.missing.length} payment(s) still missing accounting records` : ' · Accounting review unavailable') });
         } catch (err) {
             setSyncResult({ success: false, message: err.message });
         } finally {
@@ -183,7 +193,7 @@ export default function Banking() {
             setAccounts(data);
             if (data.length > 0) {
                 setSelectedAccount(data[0]);
-                await loadTransactions(data[0].id);
+                return await loadTransactions(data[0].id);
             }
         } catch (error) {
             console.error('Error loading accounts:', error);
@@ -193,13 +203,48 @@ export default function Banking() {
     }
 
     async function loadTransactions(accountId) {
+        const version = ++transactionLoadVersion.current;
+        setAttention(null);
+        setAttentionError(null);
         try {
             const data = await getBankTransactionsByAccount(accountId);
+            if (version !== transactionLoadVersion.current) return null;
             setTransactions(data);
+            const [invoices, expenses, dlaEntries, dlaPayments, ledgerEntries, baseline, payrollSettings, payrollRuns] = await Promise.all([
+                getInvoices(), getExpenses(), getDlaEntries(), getAllDlaPayments(), getCompanyLedger(), getCashBaseline(accountId),
+                getPayrollSettings(), getPayrollRuns()
+            ]);
+            if (version !== transactionLoadVersion.current) return null;
+            const records = { invoices, expenses, dlaEntries, dlaPayments, ledgerEntries,
+                includePayroll: Boolean(payrollSettings?.employerPAYEReference || payrollSettings?.employerPayeReference) || payrollRuns.length > 0 };
+            const review = bankAttention(data, records, baseline?.asOfDate);
+            const breakdown = mainAccountBookBreakdown(calculateRecordedTradingCash(records), baseline, data);
+            const result = { ...review, breakdown, baseline, accountId };
+            setAttention(result);
+            return result;
         } catch (error) {
             console.error('Error loading transactions:', error);
+            if (version === transactionLoadVersion.current) setAttentionError(error.message);
+            return null;
         }
     }
+
+    const handleReviewPayments = async () => {
+        if (!attention || attention.accountId !== selectedAccount?.id) return;
+        setCsvImporting(true);
+        try {
+            const [inbox, categories] = await Promise.all([getReceiptInbox(), getCategories()]);
+            const proposals = buildMonthlyProposals({ transactions: attention.transactions, comparisons: attention.comparisons,
+                existing: transactions, inbox: inbox.filter(receipt => receipt.status === 'analysed'),
+                baselineDate: attention.baseline.asOfDate, categories });
+            setCsvPreview({ source: 'saved', accountId: selectedAccount.id, transactions: attention.transactions, proposals, categories,
+                rejected: [], statement: { balanceErrors: [] } });
+        } catch (error) {
+            setSyncResult({ success: false, message: `Payment review unavailable: ${error.message}` });
+        } finally {
+            setCsvImporting(false);
+        }
+    };
 
     const handleSelectAccount = async (account) => {
         setCsvPreview(null);
@@ -545,8 +590,15 @@ export default function Banking() {
                                 {monzoStatus.lastSyncedAt && (
                                     <span> · Last sync: {new Date(monzoStatus.lastSyncedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
                                 )}
+                                {monzoStatus.connected && monzoStatus.canRefresh && (
+                                    <span> · Access renews automatically</span>
+                                )}
                                 {monzoStatus.connected && monzoStatus.canRefresh === false && (
-                                    <span style={{ color: '#dc2626', fontWeight: 600 }}> · No refresh token: the daily sync will stop when access expires.</span>
+                                    <span role={monzoStatus.expiryWarning ? 'alert' : undefined} style={{ color: monzoStatus.expiryWarning ? '#dc2626' : '#6b7280', fontWeight: 600 }}>
+                                        {monzoStatus.accessExpiresAtUtc
+                                            ? ` · Reconnect before ${new Date(monzoStatus.accessExpiresAtUtc).toLocaleString('en-GB')}; automatic renewal is unavailable.`
+                                            : ' · No refresh token: automatic renewal is unavailable; expiry time is unknown.'}
+                                    </span>
                                 )}
                             </div>
                         </div>
@@ -827,7 +879,50 @@ export default function Banking() {
 
                     {ownerApi && <ReceiptInbox key={inboxVersion} />}
 
-                    {csvPreview && <BankImportPreview preview={csvPreview} processing={csvImporting} onConfirm={handleConfirmCsvImport} onCancel={() => setCsvPreview(null)} onSettlement={import.meta.env.VITE_SETTLEMENT_API_SCOPE ? handleConfirmSettlement : undefined} />}
+                    {attentionError && <p role="alert">Accounting comparison unavailable: {attentionError}</p>}
+                    {attention && <section aria-label="Bank payments needing attention" style={{ margin: '1rem 0', borderTop: '1px solid #d1d5db', paddingTop: '1rem' }}>
+                        <div className="section-header">
+                            <h3>Needs Attention ({attention.missing.length})</h3>
+                            {ownerApi && attention.transactions.length > 0 && <button className="btn-secondary" onClick={handleReviewPayments} disabled={csvImporting || monzoSyncing}>Review Payments</button>}
+                        </div>
+                        <p>Unrecorded money out: £{attention.moneyOut.toFixed(2)} | Unrecorded money in: £{attention.moneyIn.toFixed(2)}</p>
+                        {attention.missing.length > 0 && <div className="table-container"><table className="data-table">
+                            <thead><tr><th>Date</th><th>Description</th><th>Money Out</th><th>Money In</th></tr></thead>
+                            <tbody>{attention.missing.map(transaction => <tr key={transaction.id}>
+                                <td>{String(transaction.transactionDate).slice(0, 10)}</td><td>{transaction.description}</td>
+                                <td>{transaction.direction === 'Out' ? `£${Number(transaction.amount).toFixed(2)}` : '-'}</td>
+                                <td>{transaction.direction === 'In' ? `£${Number(transaction.amount).toFixed(2)}` : '-'}</td>
+                            </tr>)}</tbody>
+                        </table></div>}
+                        {attention.transactions.length > attention.missing.length && <p>{attention.transactions.length - attention.missing.length} other payment(s) have potential matches awaiting review.</p>}
+                        {attention.possibleDuplicatePots.length > 0 && <section aria-label="Possible duplicate pot transfers" style={{ marginTop: '1rem' }}>
+                            <h4 role="alert">Possible Duplicate Pot Transfers ({attention.possibleDuplicatePots.length})</h4>
+                            <div className="table-container"><table className="data-table">
+                                <thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Direction</th><th>Source</th><th>Bank Row ID</th></tr></thead>
+                                <tbody>{attention.possibleDuplicatePots.flat().map(transaction => <tr key={transaction.id}>
+                                    <td>{String(transaction.transactionDate).slice(0, 10)}</td><td>{transaction.description}</td>
+                                    <td>£{Number(transaction.amount).toFixed(2)}</td><td>{transaction.direction}</td><td>{transaction.source}</td><td>{transaction.id}</td>
+                                </tr>)}</tbody>
+                            </table></div>
+                        </section>}
+                        <details style={{ marginTop: '1rem' }}>
+                            <summary>Book Balance Breakdown: £{attention.breakdown.balance.toFixed(2)}</summary>
+                            <dl>
+                                <dt>Baseline book balance</dt><dd>£{attention.breakdown.baseline.toFixed(2)}</dd>
+                                <dt>Historical corrections</dt><dd>£{attention.breakdown.historicalAdjustment.toFixed(2)}</dd>
+                                <dt>Change in recorded accounting payments</dt><dd>£{attention.breakdown.recordedChange.toFixed(2)}</dd>
+                                <dt>Net pot transfers after baseline</dt><dd>£{attention.breakdown.potTransfers.toFixed(2)}</dd>
+                                {monzoBalance != null && <>
+                                    <dt>Monzo main-account balance at last manual sync</dt><dd>£{monzoBalance.toFixed(2)}</dd>
+                                    <dt>Book minus Monzo</dt><dd>£{(attention.breakdown.balance - monzoBalance).toFixed(2)}</dd>
+                                    <dt>Unrecorded money out minus money in</dt><dd>£{(attention.moneyOut - attention.moneyIn).toFixed(2)}</dd>
+                                    <dt>Difference not explained by these missing payments</dt><dd>£{(attention.breakdown.balance - monzoBalance - attention.moneyOut + attention.moneyIn).toFixed(2)}</dd>
+                                </>}
+                            </dl>
+                        </details>
+                    </section>}
+
+                    {csvPreview && csvPreview.source !== 'saved' && <BankImportPreview preview={csvPreview} processing={csvImporting} onConfirm={handleConfirmCsvImport} onCancel={() => setCsvPreview(null)} onSettlement={import.meta.env.VITE_SETTLEMENT_API_SCOPE ? handleConfirmSettlement : undefined} />}
 
                     {csvPreview?.proposals && <MonthlyReconciliationReview proposals={csvPreview.proposals} categories={csvPreview.categories || []}
                         processing={csvImporting} canApply={csvPreview.rejected.length === 0 && csvPreview.statement.balanceErrors.length === 0}

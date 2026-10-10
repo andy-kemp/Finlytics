@@ -117,7 +117,12 @@ namespace FinanceHubFunctions.Helpers
             var candidates = rows.Where(row => row.TransactionDate.HasValue && Math.Abs((row.TransactionDate.Value - local).TotalMinutes) <= FingerprintWindow.TotalMinutes
                 && Math.Abs(row.Amount ?? 0) == amount && row.Direction == direction && row.Source != Source
                 && (string.IsNullOrEmpty(row.MonzoTransactionId) || row.MonzoTransactionId == row.ExternalId)).ToList();
-            return candidates.Count == 1 ? (candidates[0], false) : (null, candidates.Count > 1);
+            if (candidates.Count == 1) return (candidates[0], false);
+            if (candidates.Count > 1) return (null, true);
+            var possiblePotDuplicate = tx.PotId != null && rows.Any(row => row.Source != Source
+                && row.TransactionDate?.Date == local.Date && CashBaselinePolicy.IsInternal(row)
+                && Math.Abs(row.Amount ?? 0) == amount && row.Direction == direction);
+            return (null, possiblePotDuplicate);
         }
 
         public static (MonzoPot? Vat, MonzoPot? Ct) MatchTaxPots(IEnumerable<MonzoPot> pots)

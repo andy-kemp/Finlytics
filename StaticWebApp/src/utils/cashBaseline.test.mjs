@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { calculateMainAccountBookBalance, loadMainAccountCashBaseline } from './cashBaseline.mjs';
+import { calculateMainAccountBookBalance, loadMainAccountCashBaseline, mainAccountBookBreakdown } from './cashBaseline.mjs';
 import { calculateRecordedTradingCash } from './cashCalculations.mjs';
 
 const baseline = {
@@ -14,6 +14,13 @@ const calculate = (balance = 2500, transactions = [], snapshot = baseline) =>
     calculateMainAccountBookBalance({ balance }, snapshot, transactions, endDate);
 const transfer = overrides => ({ bankAccountId: 7, amount: 200, direction: 'Out',
     category: 'Internal Transfer', transactionDate: '2026-10-02', ...overrides });
+
+test('read-only balance breakdown identifies a pot withdrawal without changing recorded trading cash', () => {
+    const rows = [transfer({ direction: 'In', amount: 142.03 }), transfer({ direction: 'In', amount: 113.29 })];
+    const result = mainAccountBookBreakdown({ balance: 2500 }, baseline, rows, endDate);
+    assert.deepEqual(result, { balance: 1284.47, baseline: 1029.15, historicalAdjustment: 0, recordedChange: 0, potTransfers: 255.32 });
+    assert.equal(result.balance, calculateMainAccountBookBalance({ balance: 2500 }, baseline, rows, endDate));
+});
 
 test('approved historical additions use a separate penny amendment, preserving baseline and raw cash', () => {
     const snapshot = { ...baseline, recordedCashAtCreation: 3871.03, historicalExpenseAdjustment: 563.95,

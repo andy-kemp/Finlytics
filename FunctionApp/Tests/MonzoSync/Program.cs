@@ -36,6 +36,14 @@ Check(!CashBaselinePolicy.IsInternal(MonzoSyncPolicy.ToBank(savingsNoPot, 1, nam
 var csvRow = new BankTransaction { Id = 69, BankAccountId = 1, Source = "CSV", ExternalId = "mm_a", MonzoTransactionId = "mm_a",
     TransactionDate = new DateTime(2026, 10, 9, 7, 37, 52), Amount = 6.20m, Direction = "Out" };
 Check(MonzoSyncPolicy.FindExisting(card, 1, new[] { csvRow }) == csvRow, "CSV row matched by UK time, amount and direction");
+var csvId = csvRow.ExternalId;
+var beforeLink = new RecordedCashSources { BankTransactions = new() { csvRow } };
+csvRow.MonzoTransactionId = card.Id;
+Check(!csvRow.IsReconciled && csvRow.ExternalId == csvId && beforeLink.Calculate(now) == 0,
+    "linking an imported bank row does not reconcile it or record an expense");
+Check(MonzoSyncPolicy.FindExisting(card, 1, new[] { csvRow }) == csvRow,
+    "repeat sync reuses the outstanding CSV row");
+csvRow.MonzoTransactionId = csvId;
 Check(MonzoSyncPolicy.FindExisting(card, 2, new[] { csvRow }) == null, "other account never matched");
 var twin = new BankTransaction { Id = 70, BankAccountId = 1, Source = "CSV", TransactionDate = new DateTime(2026, 10, 9, 7, 40, 0), Amount = 6.20m, Direction = "Out" };
 Check(MonzoSyncPolicy.Match(card, 1, new[] { csvRow, twin }) is (null, true), "ambiguous fingerprint reported, never imported over the top");
@@ -44,6 +52,16 @@ Check(MonzoSyncPolicy.FindExisting(card, 1, new[] { new BankTransaction { BankAc
 var apiRow = new BankTransaction { BankAccountId = 1, Source = "Monzo", ExternalId = "tx_1", MonzoTransactionId = "tx_1" };
 Check(MonzoSyncPolicy.FindExisting(card, 1, new[] { apiRow }) == apiRow, "exact API id deduplicated");
 Check(MonzoSyncPolicy.FindExisting(card, 1, new[] { with_amount() }) == null, "different amount not matched");
+
+var earlierCsvPot = new BankTransaction { Id = 72, BankAccountId = 1, Source = "CSV", ExternalId = "mm_vat",
+    MonzoTransactionId = "mm_vat", TransactionDate = new DateTime(2026, 10, 9, 19, 0, 0),
+    Amount = 142.03m, Direction = "In", Description = "VAT Pot - Pot transfer", Category = "Internal Transfer" };
+Check(MonzoSyncPolicy.Match(potOut, 1, new[] { earlierCsvPot }) is (null, true),
+    "same-day pot transfer outside the timestamp window is flagged, not duplicated into cash");
+Check(MonzoSyncPolicy.Match(potOut with { AmountPence = 15000 }, 1, new[] { earlierCsvPot }) is (null, false),
+    "different-amount pot transfer is still imported");
+Check(MonzoSyncPolicy.Match(potOut with { CreatedUtc = potOut.CreatedUtc.AddDays(1) }, 1, new[] { earlierCsvPot }) is (null, false),
+    "different-day pot transfer is still imported");
 
 var pots = new[] { new MonzoPot("pot_vat", "VAT Pot", 508.31m, false), new MonzoPot("pot_ct", "CT Pot", 958.53m, false), new MonzoPot("pot_x", "Holiday", 10m, false) };
 var (vat, ct) = MonzoSyncPolicy.MatchTaxPots(pots);
@@ -75,5 +93,15 @@ Check(!MonzoSyncPolicy.VerifyState("other", state, now), "state signed with anot
 Check(!MonzoSyncPolicy.VerifyState(secret, state.Replace("0123", "9123"), now) && !MonzoSyncPolicy.VerifyState(secret, null, now)
     && !MonzoSyncPolicy.VerifyState(secret, "1.2", now), "tampered or missing state refused");
 Console.WriteLine("All offline Monzo sync checks passed.");
+
+using var tokens = JsonDocument.Parse("""{"expires_in":21600}""");
+Check(MonzoConnectionPolicy.AccessExpiry(tokens.RootElement, now) == now.AddHours(6), "Monzo expiry comes from expires_in, not a made-up 90-day deadline");
+Check(!MonzoConnectionPolicy.Warn(true, now.AddHours(6), now)
+    && !MonzoConnectionPolicy.EmailDue(true, now.AddHours(6), false, now), "automatically renewable tokens do not warn or email");
+Check(MonzoConnectionPolicy.Warn(false, now.AddDays(15), now)
+    && !MonzoConnectionPolicy.Warn(false, now.AddDays(16), now), "non-renewable access warning starts 15 days before actual expiry");
+Check(MonzoConnectionPolicy.EmailDue(false, now.AddDays(5), false, now)
+    && !MonzoConnectionPolicy.EmailDue(false, now.AddDays(6), false, now), "expiry email starts five days before actual non-renewable expiry");
+Check(!MonzoConnectionPolicy.Warn(false, null, now) && MonzoConnectionPolicy.EmailDue(true, null, true, now), "unknown expiry is not invented; failed renewal requires an email");
 
 BankTransaction with_amount() => new() { BankAccountId = 1, Source = "CSV", TransactionDate = csvRow.TransactionDate, Amount = 6.21m, Direction = "Out" };

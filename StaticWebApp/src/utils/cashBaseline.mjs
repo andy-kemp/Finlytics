@@ -15,8 +15,12 @@ function utcDay(value) {
 }
 
 export function calculateMainAccountBookBalance(rawCash, baseline, bankTransactions, endDate = new Date()) {
+    return mainAccountBookBreakdown(rawCash, baseline, bankTransactions, endDate).balance;
+}
+
+export function mainAccountBookBreakdown(rawCash, baseline, bankTransactions, endDate = new Date()) {
     const recorded = pennies(rawCash?.balance);
-    if (baseline === null) return recorded / 100;
+    if (baseline === null) return { balance: recorded / 100, baseline: null };
     if (!baseline || baseline.bankAccountId == null) throw new Error('Invalid cash baseline account');
     if (!Array.isArray(bankTransactions)) throw new Error('Main-account bank transactions unavailable');
     const cutoff = utcDay(baseline.asOfDate);
@@ -31,8 +35,14 @@ export function calculateMainAccountBookBalance(rawCash, baseline, bankTransacti
         if (!['In', 'Out'].includes(transaction.direction)) throw new Error('Internal transfer has an invalid direction');
         transfers += Math.abs(pennies(transaction.amount)) * (transaction.direction === 'In' ? 1 : -1);
     }
-    return (pennies(baseline.bookBalance) + pennies(baseline.historicalExpenseAdjustment ?? 0)
-        + recorded - pennies(baseline.recordedCashAtCreation) + transfers) / 100;
+    const baselineAmount = pennies(baseline.bookBalance);
+    const historicalAdjustment = pennies(baseline.historicalExpenseAdjustment ?? 0);
+    const recordedChange = recorded - pennies(baseline.recordedCashAtCreation);
+    return {
+        balance: (baselineAmount + historicalAdjustment + recordedChange + transfers) / 100,
+        baseline: baselineAmount / 100, historicalAdjustment: historicalAdjustment / 100,
+        recordedChange: recordedChange / 100, potTransfers: transfers / 100
+    };
 }
 
 export async function loadMainAccountCashBaseline({ getBankAccounts, getCashBaseline, getBankTransactionsByAccount }) {

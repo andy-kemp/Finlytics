@@ -14,7 +14,8 @@ using Microsoft.Extensions.Logging;
 namespace FinanceHubFunctions.Services
 {
     public sealed record MonzoSyncResult(int Imported, int Linked, int Unchanged, decimal? VatPot, decimal? CtPot,
-        int? SnapshotLedgerId, List<PotInterest> InterestRecorded, List<string> Warnings, DateTime SyncedAtUtc);
+        int? SnapshotLedgerId, List<PotInterest> InterestRecorded, List<string> Warnings, DateTime SyncedAtUtc,
+        int Fetched, decimal MainAccountBalance, DateTime SinceUtc);
 
     public sealed class MonzoSyncService
     {
@@ -34,6 +35,8 @@ namespace FinanceHubFunctions.Services
         {
             var nowUtc = DateTime.UtcNow;
             var monzoAccountId = await _monzo.ResolveAccountId();
+            using var balanceDocument = await _monzo.Get($"/balance?account_id={Uri.EscapeDataString(monzoAccountId)}");
+            var mainAccountBalance = balanceDocument.RootElement.GetProperty("balance").GetInt64() / 100m;
             using var potsDocument = await _monzo.Get($"/pots?current_account_id={Uri.EscapeDataString(monzoAccountId)}");
             var pots = potsDocument.RootElement.GetProperty("pots").EnumerateArray().Select(pot => new MonzoPot(
                 pot.GetProperty("id").GetString()!, pot.GetProperty("name").GetString() ?? "Pot",
@@ -73,7 +76,7 @@ namespace FinanceHubFunctions.Services
                     var (match, ambiguous) = MonzoSyncPolicy.Match(tx, account.Id, existing);
                     if (ambiguous)
                     {
-                        warnings.Add($"{tx.MerchantName ?? tx.Description} {Math.Abs(tx.AmountPence) / 100m:0.00} on {MonzoSyncPolicy.ToUkLocal(tx.CreatedUtc):dd/MM HH:mm} matches more than one imported row; not imported");
+                        warnings.Add($"{tx.MerchantName ?? tx.Description} {Math.Abs(tx.AmountPence) / 100m:0.00} on {MonzoSyncPolicy.ToUkLocal(tx.CreatedUtc):dd/MM HH:mm} could duplicate an existing CSV row; not imported. Check timestamps and transaction IDs.");
                         continue;
                     }
                     if (match == null)
@@ -131,7 +134,8 @@ namespace FinanceHubFunctions.Services
                 await _db.SaveChangesAsync();
                 await scope.CommitAsync();
                 foreach (var warning in warnings) _logger.LogWarning("Monzo sync: {Warning}", warning);
-                return new MonzoSyncResult(imported, linked, unchanged, vat?.Balance, ct?.Balance, snapshotId, interest, warnings, nowUtc);
+                return new MonzoSyncResult(imported, linked, unchanged, vat?.Balance, ct?.Balance, snapshotId, interest, warnings, nowUtc,
+                    transactions.DistinctBy(transaction => transaction.Id).Count(), mainAccountBalance, since);
             });
         }
 

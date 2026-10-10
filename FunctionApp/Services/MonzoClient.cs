@@ -1,6 +1,7 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -9,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.Identity;
 using Azure.Security.KeyVault.Secrets;
+using FinanceHubFunctions.Helpers;
 using Microsoft.Extensions.Logging;
 
 namespace FinanceHubFunctions.Services
@@ -59,18 +61,32 @@ namespace FinanceHubFunctions.Services
 
         public async Task SaveSecret(string name, string value)
         {
-            Environment.SetEnvironmentVariable(name, value);
             var secrets = Secrets();
             if (secrets != null) await secrets.SetSecretAsync(name, value);
+            Environment.SetEnvironmentVariable(name, value);
         }
 
-        public async Task StoreTokens(string accessToken, string? refreshToken)
+        public async Task StoreTokens(JsonElement response, bool newConnection = false)
         {
+            var accessToken = response.GetProperty("access_token").GetString()!;
+            var refreshToken = response.TryGetProperty("refresh_token", out var refresh) ? refresh.GetString() : null;
+            var expiresAt = MonzoConnectionPolicy.AccessExpiry(response, DateTime.UtcNow);
+            if (newConnection || !string.IsNullOrEmpty(refreshToken)) await SaveSecret("MonzoRefreshToken", refreshToken ?? "");
             await SaveSecret("MonzoAccessToken", accessToken);
-            if (!string.IsNullOrEmpty(refreshToken)) await SaveSecret("MonzoRefreshToken", refreshToken);
+            await SaveSecret("MonzoAccessExpiresAtUtc", expiresAt?.ToString("O", CultureInfo.InvariantCulture) ?? "");
+            await SaveSecret("MonzoReconnectNotifiedAtUtc", "");
         }
 
         public async Task<bool> HasRefreshToken() => !string.IsNullOrEmpty(await Secret("MonzoRefreshToken"));
+
+        public async Task<DateTime?> AccessExpiresAtUtc()
+        {
+            var value = await Secret("MonzoAccessExpiresAtUtc", fresh: true);
+            return DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var expiry)
+                ? expiry : null;
+        }
+
+        public async Task<bool> ReconnectNotified() => !string.IsNullOrEmpty(await Secret("MonzoReconnectNotifiedAtUtc", fresh: true));
 
         public async Task<string?> AccountId() => await Secret("MonzoAccountId");
 
@@ -95,8 +111,7 @@ namespace FinanceHubFunctions.Services
                     throw new MonzoReconnectRequiredException("Monzo refused to renew access; reconnect Monzo");
                 }
                 using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-                await StoreTokens(document.RootElement.GetProperty("access_token").GetString()!,
-                    document.RootElement.TryGetProperty("refresh_token", out var next) ? next.GetString() : null);
+                await StoreTokens(document.RootElement);
             }
             finally { RefreshLock.Release(); }
         }

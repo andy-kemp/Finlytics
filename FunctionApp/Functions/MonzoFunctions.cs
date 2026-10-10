@@ -27,15 +27,17 @@ namespace FinanceHubFunctions.Functions
         private readonly MonzoSyncService _sync;
         private readonly FinanceHubDbContext _db;
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly EmailService _email;
 
         public MonzoFunctions(ILogger<MonzoFunctions> logger, MonzoClient monzo, MonzoSyncService sync,
-            FinanceHubDbContext db, IHttpClientFactory httpClientFactory)
+            FinanceHubDbContext db, IHttpClientFactory httpClientFactory, EmailService email)
         {
             _logger = logger;
             _monzo = monzo;
             _sync = sync;
             _db = db;
             _httpClientFactory = httpClientFactory;
+            _email = email;
         }
 
         private static async Task<HttpResponseData> Json(HttpRequestData req, HttpStatusCode status, object value)
@@ -93,7 +95,7 @@ namespace FinanceHubFunctions.Functions
                 }
                 using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
                 var refresh = document.RootElement.TryGetProperty("refresh_token", out var r) ? r.GetString() : null;
-                await _monzo.StoreTokens(document.RootElement.GetProperty("access_token").GetString()!, refresh);
+                await _monzo.StoreTokens(document.RootElement, newConnection: true);
                 return Redirect(req, $"monzo_connected=true&refresh={(string.IsNullOrEmpty(refresh) ? "missing" : "ok")}");
             }
             catch (Exception exception)
@@ -113,10 +115,13 @@ namespace FinanceHubFunctions.Functions
             {
                 using var whoami = await _monzo.Get("/ping/whoami");
                 var authenticated = whoami.RootElement.TryGetProperty("authenticated", out var flag) && flag.GetBoolean();
+                var canRefresh = await _monzo.HasRefreshToken();
+                var accessExpiresAtUtc = await _monzo.AccessExpiresAtUtc();
                 return await Json(req, HttpStatusCode.OK, new
                 {
                     configured, connected = authenticated, needsReconnect = !authenticated,
-                    canRefresh = await _monzo.HasRefreshToken(), lastSyncedAt = account?.MonzoLastSyncedAt
+                    canRefresh, accessExpiresAtUtc, expiryWarning = MonzoConnectionPolicy.Warn(canRefresh, accessExpiresAtUtc, DateTime.UtcNow),
+                    lastSyncedAt = account?.MonzoLastSyncedAt
                 });
             }
             catch (MonzoReconnectRequiredException exception)
@@ -124,7 +129,8 @@ namespace FinanceHubFunctions.Functions
                 return await Json(req, HttpStatusCode.OK, new
                 {
                     configured, connected = false, needsReconnect = true, message = exception.Message,
-                    canRefresh = await _monzo.HasRefreshToken(), lastSyncedAt = account?.MonzoLastSyncedAt
+                    canRefresh = await _monzo.HasRefreshToken(), accessExpiresAtUtc = await _monzo.AccessExpiresAtUtc(),
+                    lastSyncedAt = account?.MonzoLastSyncedAt
                 });
             }
         }
@@ -156,10 +162,41 @@ namespace FinanceHubFunctions.Functions
                 var result = await _sync.Sync();
                 _logger.LogInformation("Monzo daily sync: {Imported} imported, {Linked} linked, {Interest} interest entries",
                     result.Imported, result.Linked, result.InterestRecorded.Count);
+                await NotifyReconnect(false);
             }
             catch (MonzoReconnectRequiredException exception)
             {
                 _logger.LogWarning("Monzo daily sync skipped: {Message}", exception.Message);
+                await NotifyReconnect(true);
+            }
+        }
+
+        private async Task NotifyReconnect(bool needsReconnect)
+        {
+            try
+            {
+                if (!await _db.BankAccounts.AnyAsync(account => account.MonzoLastSyncedAt != null)) return;
+                var expiresAt = await _monzo.AccessExpiresAtUtc();
+                if (!MonzoConnectionPolicy.EmailDue(await _monzo.HasRefreshToken(), expiresAt, needsReconnect, DateTime.UtcNow)
+                    || await _monzo.ReconnectNotified()) return;
+                var company = await _db.CompanySettings.AsNoTracking().OrderBy(settings => settings.Id).FirstOrDefaultAsync();
+                var recipient = Environment.GetEnvironmentVariable("MonzoNotificationEmail") ?? company?.CompanyEmail ?? company?.Email;
+                if (string.IsNullOrWhiteSpace(recipient))
+                {
+                    _logger.LogWarning("Monzo reconnect notification has no configured recipient");
+                    return;
+                }
+                var subject = needsReconnect ? "Finlytics: Monzo needs reconnecting" : "Finlytics: Monzo access is expiring";
+                var detail = needsReconnect ? "The daily bank sync cannot renew Monzo access."
+                    : $"Monzo access expires at {expiresAt:dd MMM yyyy HH:mm} UTC and no refresh token is available.";
+                var (success, error) = await _email.SendSystemEmailAsync(recipient, subject,
+                    $"<p>{detail}</p><p><a href=\"{FrontendBankingUrl}\">Open Banking in Finlytics</a>, reconnect Monzo and approve access in the Monzo app. Existing transactions are kept.</p>");
+                if (success) await _monzo.SaveSecret("MonzoReconnectNotifiedAtUtc", DateTime.UtcNow.ToString("O"));
+                else _logger.LogWarning("Monzo reconnect email failed: {Error}", error);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Monzo reconnect notification failed; it will be retried on the next daily sync");
             }
         }
     }
