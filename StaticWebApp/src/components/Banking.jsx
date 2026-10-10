@@ -211,7 +211,7 @@ export default function Banking() {
             if (version !== transactionLoadVersion.current) return null;
             setTransactions(data);
             const [invoices, expenses, dlaEntries, dlaPayments, ledgerEntries, baseline, payrollSettings, payrollRuns] = await Promise.all([
-                getInvoices(), getExpenses(), getDlaEntries(), getAllDlaPayments(), getCompanyLedger(), getCashBaseline(accountId),
+                getInvoices(), getExpenses(), getDlaEntries(), getAllDlaPayments(), getCompanyLedger('all'), getCashBaseline(accountId),
                 getPayrollSettings(), getPayrollRuns()
             ]);
             if (version !== transactionLoadVersion.current) return null;
@@ -231,6 +231,10 @@ export default function Banking() {
 
     const handleReviewPayments = async () => {
         if (!attention || attention.accountId !== selectedAccount?.id) return;
+        if (attention.possibleDuplicatePayments.length) {
+            setSyncResult({ success: false, message: 'Resolve the possible CSV/Monzo duplicate payments before reconciliation.' });
+            return;
+        }
         setCsvImporting(true);
         try {
             const [inbox, categories] = await Promise.all([getReceiptInbox(), getCategories()]);
@@ -882,10 +886,12 @@ export default function Banking() {
                     {attentionError && <p role="alert">Accounting comparison unavailable: {attentionError}</p>}
                     {attention && <section aria-label="Bank payments needing attention" style={{ margin: '1rem 0', borderTop: '1px solid #d1d5db', paddingTop: '1rem' }}>
                         <div className="section-header">
-                            <h3>Needs Attention ({attention.missing.length})</h3>
-                            {ownerApi && attention.transactions.length > 0 && <button className="btn-secondary" onClick={handleReviewPayments} disabled={csvImporting || monzoSyncing}>Review Payments</button>}
+                            <h3>Needs Attention ({attention.missing.length}{attention.possibleDuplicatePayments.length ? ' bank rows' : ''})</h3>
+                            {ownerApi && attention.transactions.length > 0 && <button className="btn-secondary" onClick={handleReviewPayments} disabled={csvImporting || monzoSyncing || attention.possibleDuplicatePayments.length > 0}>Review Payments</button>}
                         </div>
-                        <p>Unrecorded money out: £{attention.moneyOut.toFixed(2)} | Unrecorded money in: £{attention.moneyIn.toFixed(2)}</p>
+                        {attention.possibleDuplicatePayments.length > 0
+                            ? <p role="alert">{attention.possibleDuplicatePayments.length} possible duplicate payment group(s). Unrecorded totals and reconciliation are unavailable until these bank rows are resolved.</p>
+                            : <p>Unrecorded money out: £{attention.moneyOut.toFixed(2)} | Unrecorded money in: £{attention.moneyIn.toFixed(2)}</p>}
                         {attention.missing.length > 0 && <div className="table-container"><table className="data-table">
                             <thead><tr><th>Date</th><th>Description</th><th>Money Out</th><th>Money In</th></tr></thead>
                             <tbody>{attention.missing.map(transaction => <tr key={transaction.id}>
@@ -895,6 +901,16 @@ export default function Banking() {
                             </tr>)}</tbody>
                         </table></div>}
                         {attention.transactions.length > attention.missing.length && <p>{attention.transactions.length - attention.missing.length} other payment(s) have potential matches awaiting review.</p>}
+                        {attention.possibleDuplicatePayments.length > 0 && <section aria-label="Possible duplicate card payments" style={{ marginTop: '1rem' }}>
+                            <h4>Possible Duplicate Payments ({attention.possibleDuplicatePayments.length})</h4>
+                            <div className="table-container"><table className="data-table">
+                                <thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Source</th><th>Bank Row ID</th></tr></thead>
+                                <tbody>{attention.possibleDuplicatePayments.flat().map(transaction => <tr key={transaction.id}>
+                                    <td>{String(transaction.transactionDate).slice(0, 10)}</td><td>{transaction.description}</td>
+                                    <td>£{Number(transaction.amount).toFixed(2)}</td><td>{transaction.source}</td><td>{transaction.id}</td>
+                                </tr>)}</tbody>
+                            </table></div>
+                        </section>}
                         {attention.possibleDuplicatePots.length > 0 && <section aria-label="Possible duplicate pot transfers" style={{ marginTop: '1rem' }}>
                             <h4 role="alert">Possible Duplicate Pot Transfers ({attention.possibleDuplicatePots.length})</h4>
                             <div className="table-container"><table className="data-table">
@@ -915,8 +931,10 @@ export default function Banking() {
                                 {monzoBalance != null && <>
                                     <dt>Monzo main-account balance at last manual sync</dt><dd>£{monzoBalance.toFixed(2)}</dd>
                                     <dt>Book minus Monzo</dt><dd>£{(attention.breakdown.balance - monzoBalance).toFixed(2)}</dd>
-                                    <dt>Unrecorded money out minus money in</dt><dd>£{(attention.moneyOut - attention.moneyIn).toFixed(2)}</dd>
-                                    <dt>Difference not explained by these missing payments</dt><dd>£{(attention.breakdown.balance - monzoBalance - attention.moneyOut + attention.moneyIn).toFixed(2)}</dd>
+                                    {attention.possibleDuplicatePayments.length === 0 && <>
+                                        <dt>Unrecorded money out minus money in</dt><dd>£{(attention.moneyOut - attention.moneyIn).toFixed(2)}</dd>
+                                        <dt>Difference not explained by these missing payments</dt><dd>£{(attention.breakdown.balance - monzoBalance - attention.moneyOut + attention.moneyIn).toFixed(2)}</dd>
+                                    </>}
                                 </>}
                             </dl>
                         </details>

@@ -254,7 +254,17 @@ namespace FinanceHubFunctions.Functions
                 }
             }
 
-            var created = await _bankTransactionRepository.CreateManyAsync(transactions);
+            IEnumerable<BankTransaction> created;
+            try
+            {
+                created = await _bankTransactionRepository.CreateManyAsync(transactions);
+            }
+            catch (BankDuplicateReviewException exception)
+            {
+                var conflict = req.CreateResponse(HttpStatusCode.Conflict);
+                await conflict.WriteAsJsonAsync(new { error = exception.Message }, HttpStatusCode.Conflict);
+                return conflict;
+            }
             var ok = req.CreateResponse(HttpStatusCode.OK);
             await ok.WriteAsJsonAsync(created);
             return ok;

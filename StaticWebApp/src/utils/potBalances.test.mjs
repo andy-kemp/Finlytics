@@ -4,16 +4,17 @@ import { calculateAvailableAfterTax, calculateBookCashWithPots } from './potBala
 
 const snapshot = { vatPotBalance: 650, ctPotBalance: 1071.82, asOfDate: '2026-10-08' };
 
-test('pot surpluses over estimated VAT and CT liabilities are available cash', () => {
-    const result = calculateAvailableAfterTax(calculateBookCashWithPots(996.86, snapshot), snapshot, 508.14, 958.53);
-    assert.deepEqual(result, { available: 1252.01, vatSurplus: 141.86, ctSurplus: 113.29 });
+test('available after tax includes pot surpluses without duplicating pot withdrawals', () => {
+    assert.deepEqual(calculateAvailableAfterTax(calculateBookCashWithPots(996.86, snapshot), snapshot, 508.14, 958.53),
+        { available: 1252.01, vatSurplus: 141.86, ctSurplus: 113.29 });
+    const cleaned = { vatPotBalance: 508.14, ctPotBalance: 958.53, asOfDate: '2026-10-09' };
+    assert.equal(calculateAvailableAfterTax(calculateBookCashWithPots(1252.18, cleaned), cleaned, 508.14, 958.53).available, 1252.18);
+    assert.equal(calculateAvailableAfterTax(null, cleaned, 508.14, 958.53), null);
 });
 
-test('pot shortfalls reduce available cash and VAT reclaims are not counted', () => {
-    const result = calculateAvailableAfterTax(calculateBookCashWithPots(996.86, snapshot), snapshot, -200, 1200);
-    assert.deepEqual(result, { available: 1518.68, vatSurplus: 650, ctSurplus: -128.18 });
-    assert.equal(calculateAvailableAfterTax(null, snapshot, 0, 0), null);
-    assert.equal(calculateAvailableAfterTax({ overall: null, excludingPots: 1 }, snapshot, 0, 0), null);
+test('pot shortfalls reduce available cash and VAT refunds are not counted before receipt', () => {
+    assert.equal(calculateAvailableAfterTax(calculateBookCashWithPots(100, snapshot), snapshot, 700, 1100).available, 21.82);
+    assert.equal(calculateAvailableAfterTax(calculateBookCashWithPots(100, snapshot), snapshot, -100, 0).available, 1821.82);
 });
 
 test('overall book cash includes actual pots; excluding pots is main-account book cash', () => {

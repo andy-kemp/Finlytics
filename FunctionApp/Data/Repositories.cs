@@ -1101,6 +1101,8 @@ namespace FinanceHubFunctions.Data
                 var ids = IdKeys(transaction).ToList();
                 var row = RowKey(transaction);
                 if (ids.Any(knownIds.Contains) || (ids.Count == 0 ? knownRows.Contains(row) : unidentifiedRows.Contains(row))) continue;
+                if (existing.Concat(created).Any(other => FinanceHubFunctions.Helpers.MonzoSyncPolicy.PossibleCrossFeedDuplicate(transaction, other)))
+                    throw new FinanceHubFunctions.Helpers.BankDuplicateReviewException();
                 created.Add(transaction);
                 foreach (var id in ids) knownIds.Add(id);
                 knownRows.Add(row);

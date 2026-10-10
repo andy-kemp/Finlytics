@@ -127,9 +127,11 @@ namespace FinanceHubFunctions.Functions
             if (baselines.Count == 1 && CashBaselinePolicy.TryDate(CashBaselinePolicy.Read(baselines[0], accountId).AsOfDate, out var asOf)) cutoff = asOf;
 
             var externalIds = request.Actions!.Select(action => action.ExternalId!).ToList();
-            var banks = await _db.BankTransactions.Where(bank => bank.BankAccountId == accountId
-                && ((bank.ExternalId != null && externalIds.Contains(bank.ExternalId))
-                    || (bank.MonzoTransactionId != null && externalIds.Contains(bank.MonzoTransactionId)))).ToListAsync();
+            var accountBanks = await _db.BankTransactions.Where(bank => bank.BankAccountId == accountId).ToListAsync();
+            var banks = accountBanks.Where(bank => (bank.ExternalId != null && externalIds.Contains(bank.ExternalId))
+                || (bank.MonzoTransactionId != null && externalIds.Contains(bank.MonzoTransactionId))).ToList();
+            Require(!banks.Any(bank => accountBanks.Any(other => MonzoSyncPolicy.PossibleCrossFeedDuplicate(bank, other))),
+                "Selected payments have possible CSV/Monzo duplicates; resolve the bank rows before creating or linking accounting records");
             var bankIds = banks.Select(bank => bank.Id).ToList();
             var matches = await _db.ReconciliationMatches.AsNoTracking().ToListAsync();
             var settled = await _db.Expenses.AsNoTracking().Where(expense => expense.SettlementBankTransactionId != null

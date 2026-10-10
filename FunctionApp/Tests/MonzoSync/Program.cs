@@ -46,12 +46,27 @@ Check(MonzoSyncPolicy.FindExisting(card, 1, new[] { csvRow }) == csvRow,
 csvRow.MonzoTransactionId = csvId;
 Check(MonzoSyncPolicy.FindExisting(card, 2, new[] { csvRow }) == null, "other account never matched");
 var twin = new BankTransaction { Id = 70, BankAccountId = 1, Source = "CSV", TransactionDate = new DateTime(2026, 10, 9, 7, 40, 0), Amount = 6.20m, Direction = "Out" };
-Check(MonzoSyncPolicy.Match(card, 1, new[] { csvRow, twin }) is (null, true), "ambiguous fingerprint reported, never imported over the top");
+Check(MonzoSyncPolicy.Match(card with { CreatedUtc = card.CreatedUtc.AddMinutes(1) }, 1, new[] { csvRow, twin }) is (null, true), "ambiguous fingerprint reported, never imported over the top");
+Check(MonzoSyncPolicy.Match(card, 1, new[] { csvRow, twin }) == (csvRow, false), "exact exported second disambiguates nearby equal-amount payments");
+var utcCsv = new BankTransaction { BankAccountId = 1, Source = "CSV", ExternalId = "mm_utc", TransactionDate = new DateTime(2026, 10, 9, 6, 37, 52), Amount = 6.20m, Direction = "Out" };
+Check(MonzoSyncPolicy.Match(card, 1, new[] { utcCsv }) == (utcCsv, false), "CSV UTC timestamp matches without a second BST adjustment");
 Check(MonzoSyncPolicy.FindExisting(card, 1, new[] { new BankTransaction { BankAccountId = 1, Source = "CSV", ExternalId = "mm_b", MonzoTransactionId = "tx_9",
     TransactionDate = csvRow.TransactionDate, Amount = 6.20m, Direction = "Out" } }) == null, "row already claimed by another API id is not reused");
 var apiRow = new BankTransaction { BankAccountId = 1, Source = "Monzo", ExternalId = "tx_1", MonzoTransactionId = "tx_1" };
 Check(MonzoSyncPolicy.FindExisting(card, 1, new[] { apiRow }) == apiRow, "exact API id deduplicated");
 Check(MonzoSyncPolicy.FindExisting(card, 1, new[] { with_amount() }) == null, "different amount not matched");
+Check(MonzoSyncPolicy.Match(card with { CreatedUtc = card.CreatedUtc.AddHours(2) }, 1, new[] { csvRow }) is (null, true),
+    "same-day CSV card payment outside timestamp window is flagged rather than imported twice");
+Check(MonzoSyncPolicy.Match(card with { CreatedUtc = card.CreatedUtc.AddDays(1) }, 1, new[] { csvRow }) is (null, false),
+    "different-day card payment is not conflated with CSV history");
+Check(MonzoSyncPolicy.Match(card, 1, new[] { apiRow, csvRow }) == (apiRow, false),
+    "existing API transaction remains idempotent even when a CSV duplicate needs cleanup");
+Check(MonzoSyncPolicy.PossibleCrossFeedDuplicate(csvRow, cardRow)
+    && MonzoSyncPolicy.PossibleCrossFeedDuplicate(cardRow, csvRow), "CSV/API duplicate guard works in both import orders");
+Check(!MonzoSyncPolicy.PossibleCrossFeedDuplicate(csvRow, twin)
+    && !MonzoSyncPolicy.PossibleCrossFeedDuplicate(csvRow, with_amount())
+    && !MonzoSyncPolicy.PossibleCrossFeedDuplicate(csvRow, MonzoSyncPolicy.ToBank(card with { CreatedUtc = card.CreatedUtc.AddDays(1) }, 1, names, now)),
+    "cross-feed guard does not merge same-source, different-amount or different-day rows");
 
 var earlierCsvPot = new BankTransaction { Id = 72, BankAccountId = 1, Source = "CSV", ExternalId = "mm_vat",
     MonzoTransactionId = "mm_vat", TransactionDate = new DateTime(2026, 10, 9, 19, 0, 0),

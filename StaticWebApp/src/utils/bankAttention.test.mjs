@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { bankAttention } from './bankAttention.mjs';
 
 const payments = [
@@ -7,6 +8,14 @@ const payments = [
     { id: 70, externalId: 'mm_hotel', description: 'Hotel Indigo', amount: 31.95 },
     { id: 71, externalId: 'mm_taxi', description: 'Taxi', amount: 15 }
 ].map(transaction => ({ ...transaction, direction: 'Out', transactionDate: '2026-10-09', isReconciled: false }));
+
+test('Banking balance diagnostics load the full ledger just like Dashboard', () => {
+    const banking = readFileSync(new URL('../components/Banking.jsx', import.meta.url), 'utf8');
+    const loader = banking.slice(banking.indexOf('async function loadTransactions'), banking.indexOf('const handleReviewPayments'));
+    assert.ok(loader.includes("getCompanyLedger('all')"));
+    assert.ok(!loader.includes('getCompanyLedger()'));
+    assert.ok(loader.includes('mainAccountBookBreakdown(calculateRecordedTradingCash(records), baseline, data)'));
+});
 
 test('existing CSV payments remain outstanding even when sync imports zero new rows', () => {
     const result = bankAttention(payments, {}, '2026-10-03');
@@ -51,4 +60,20 @@ test('recorded expenses become review matches, not missing expenses; money in is
     assert.equal(result.moneyOut, 46.95);
     assert.equal(result.moneyIn, 100);
     assert.equal(result.comparisons[0].status, 'Suggested match');
+});
+
+test('six CSV/API rows for three card payments block reliable totals without hiding or deleting rows', () => {
+    const rows = payments.flatMap(payment => [
+        { ...payment, source: 'CSV', bankAccountId: 1 },
+        { ...payment, id: payment.id + 100, source: 'Monzo', bankAccountId: 1, externalId: `tx_${payment.id}` }
+    ]);
+    const result = bankAttention(rows, {}, '2026-10-03');
+    assert.equal(result.possibleDuplicatePayments.length, 3);
+    assert.equal(result.possibleDuplicatePots.length, 0);
+    assert.equal(result.moneyOut, null);
+    assert.equal(result.moneyIn, null);
+    assert.equal(result.missing.length, 6);
+    assert.equal(rows.length, 6);
+    const reconciled = bankAttention(rows.map(row => ({ ...row, isReconciled: row.source === 'CSV' })), {}, '2026-10-03');
+    assert.equal(reconciled.possibleDuplicatePayments.length, 3);
 });

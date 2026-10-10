@@ -15,6 +15,12 @@ const calculate = (balance = 2500, transactions = [], snapshot = baseline) =>
 const transfer = overrides => ({ bankAccountId: 7, amount: 200, direction: 'Out',
     category: 'Internal Transfer', transactionDate: '2026-10-02', ...overrides });
 
+test('dashboard never substitutes all-time company cash for a failed bank balance', () => {
+    const source = readFileSync(new URL('../components/Dashboard.jsx', import.meta.url), 'utf8');
+    assert.ok(source.includes("metrics.cashBaselineError ? 'Unavailable' : formatCurrency(metrics.mainAccountBookBalance ?? metrics.totalCompanyCashEstimate)"));
+    assert.ok(source.includes('Recorded company cash (not bank balance):'));
+});
+
 test('read-only balance breakdown identifies a pot withdrawal without changing recorded trading cash', () => {
     const rows = [transfer({ direction: 'In', amount: 142.03 }), transfer({ direction: 'In', amount: 113.29 })];
     const result = mainAccountBookBreakdown({ balance: 2500 }, baseline, rows, endDate);

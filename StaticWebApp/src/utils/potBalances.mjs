@@ -17,7 +17,6 @@ export function calculateBookCashWithPots(mainAccountBookBalance, snapshot, bank
     return { overall: stale ? null : (main + vat + ct) / 100, excludingPots: main / 100, pots: (vat + ct) / 100, asOfDate: snapshot.asOfDate, stale };
 }
 
-// Each pot's surplus over its estimated liability is spendable; a shortfall reduces available cash.
 export function calculateAvailableAfterTax(bookCash, snapshot, vatOwed, corpTaxDue) {
     if (!bookCash || bookCash.overall == null) return null;
     const vatSurplus = pennies(snapshot.vatPotBalance) - pennies(Math.max(0, Number(vatOwed) || 0));

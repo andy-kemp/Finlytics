@@ -292,8 +292,8 @@ export default function Dashboard({ onNavigate }) {
                 !exp.isDLA && exp.entryDate && new Date(exp.entryDate) >= ctYtdStart);
 
             const ctBankInterest = ledgerEntries
-                .filter(e => e.entryType === 'Interest_Received' && e.effectiveDate && new Date(e.effectiveDate) >= ctYtdStart)
-                .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+                .filter(entry => entry.entryType === 'Interest_Received' && entry.effectiveDate && new Date(entry.effectiveDate) >= ctYtdStart)
+                .reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0);
             const ctIncomeNet   = ctYtdPaidInvoices.reduce((sum, inv) => sum + (inv.amountNet || 0), 0) + ctBankInterest;
             const ctAllowableExpenseNet = ctYtdExpenses
                 .filter(exp => exp.ctTag !== 'NonCT')
@@ -356,6 +356,7 @@ export default function Dashboard({ onNavigate }) {
                     if (potSnapshot && mainAccountBookBalance !== null) bookCashWithPots = calculateBookCashWithPots(mainAccountBookBalance, potSnapshot, cashBaselineState.transactions);
                 } catch (error) { potBalanceError = error.message; }
             }
+
             let availableAfterTax = null;
             try {
                 availableAfterTax = calculateAvailableAfterTax(bookCashWithPots, potSnapshot, unfiledVatBalance, corpTaxDue);
@@ -855,42 +856,34 @@ export default function Dashboard({ onNavigate }) {
                     </div>
                 </div>
 
-                <div className="metric-card balance" title={metrics.mainAccountBookBalance !== null ? [
-                    'What the main bank account should hold, excluding the VAT and CT pots.',
-                    `Starts from the bank statement balance of ${formatCurrency(metrics.cashBaseline.statementBalance)} on ${String(metrics.cashBaseline.asOfDate).slice(0, 10)}, then adds every payment in and out recorded in the app since then, plus audited corrections for historical expenses and pot transfers.`,
-                    Array.isArray(metrics.cashBaseline.pendingExpenses) && metrics.cashBaseline.pendingExpenses.length
-                        ? `The starting balance already allowed for ${formatCurrency(metrics.cashBaseline.pendingExpenses.reduce((total, expense) => total + Math.round(Number(expense.amount) * 100), 0) / 100)} of expenses that were not yet recorded at the time.` : '',
-                    'It should match your bank balance whenever every transaction is recorded.'
-                ].filter(Boolean).join('\n\n') : undefined}>
+                <div className="metric-card balance">
                     <div className="metric-icon">🧮</div>
                     <div className="metric-content">
-                        <div className="metric-label">{metrics.mainAccountBookBalance !== null ? <>Book Balance Excluding VAT / CT Pots <span aria-hidden="true" style={{ cursor: 'help' }}>ⓘ</span></> : metrics.cashBaselineError ? 'Recorded Company Cash' : 'Recorded Cash Balance'}</div>
-                        <div className={`metric-value ${(metrics.mainAccountBookBalance ?? metrics.totalCompanyCashEstimate) >= 0 ? 'positive' : 'negative'}`}>
-                            {formatCurrency(metrics.mainAccountBookBalance ?? metrics.totalCompanyCashEstimate)}
+                        <div className="metric-label">{metrics.mainAccountBookBalance !== null ? 'Book Balance Excluding VAT / CT Pots' : metrics.cashBaselineError ? 'Main Account Balance' : 'Recorded Cash Balance'}</div>
+                        <div className={`metric-value ${metrics.cashBaselineError ? '' : (metrics.mainAccountBookBalance ?? metrics.totalCompanyCashEstimate) >= 0 ? 'positive' : 'negative'}`}>
+                            {metrics.cashBaselineError ? 'Unavailable' : formatCurrency(metrics.mainAccountBookBalance ?? metrics.totalCompanyCashEstimate)}
                         </div>
-                        {metrics.mainAccountBookBalance !== null
-                            ? <div className="metric-detail">Main account, from bank statement of {String(metrics.cashBaseline.asOfDate).slice(0, 10)}</div>
-                            : <div className="metric-detail">All-time in: {formatCurrency(metrics.recordedCashIn)} | Out: {formatCurrency(metrics.recordedCashOut)}</div>}
+                        {metrics.mainAccountBookBalance !== null ? <>
+                            <div className="metric-detail">Baseline + historical amendments + recorded source changes + internal transfers | Baseline date: {String(metrics.cashBaseline.asOfDate).slice(0, 10)}</div>
+                            <div className="metric-detail">Statement baseline: {formatCurrency(metrics.cashBaseline.statementBalance)}</div>
+                            {Array.isArray(metrics.cashBaseline.pendingExpenses) && <div className="metric-detail">Baseline includes {formatCurrency(metrics.cashBaseline.pendingExpenses.reduce((total, expense) => total + Math.round(Number(expense.amount) * 100), 0) / 100)} pending expenses at creation</div>}
+                        </> : <div className="metric-detail">{metrics.cashBaselineError ? `Recorded company cash (not bank balance): ${formatCurrency(metrics.totalCompanyCashEstimate)}` : `All-time in: ${formatCurrency(metrics.recordedCashIn)} | Out: ${formatCurrency(metrics.recordedCashOut)}`}</div>}
                         {metrics.cashBaselineError && <div className="metric-detail" role="alert" style={{ color: '#b91c1c' }}>Main-account book balance unavailable: {metrics.cashBaselineError}. Company cash only.</div>}
                         {metrics.cashPaymentWarnings.length > 0 && <div className="metric-detail" style={{ color: '#b91c1c' }}>{metrics.cashPaymentWarnings.length} DLA payment discrepancies</div>}
                     </div>
                 </div>
 
-                <div className="metric-card balance" title={metrics.availableAfterTax ? [
-                    'Book balance including pots, less the estimated VAT owed and Corporation Tax due.',
-                    'If a pot holds more than its tax estimate, the extra is available; if it holds less, the shortfall comes out of the main account.',
-                    'VAT refunds owed to you are not counted until received. Payments not yet recorded in the app are not included.'
-                ].join('\n\n') : undefined}>
+                <div className="metric-card balance" title="Book cash including pots, less estimated VAT and Corporation Tax. Unrecorded payments are not yet deducted.">
                     <div className="metric-icon">💷</div>
                     <div className="metric-content">
-                        <div className="metric-label">Available After Tax <span aria-hidden="true" style={{ cursor: 'help' }}>ⓘ</span></div>
+                        <div className="metric-label">Available After Tax</div>
                         <div className={`metric-value ${(metrics.availableAfterTax?.available ?? 0) >= 0 ? 'positive' : 'negative'}`}>
                             {metrics.availableAfterTax ? formatCurrency(metrics.availableAfterTax.available) : 'Unavailable'}
                         </div>
                         <div className="metric-detail">
                             {metrics.availableAfterTax ? <>
-                                <div>VAT pot {formatCurrency(metrics.potSnapshot.vatPotBalance)} − owed {formatCurrency(metrics.vatSetAside)} = {formatCurrency(metrics.availableAfterTax.vatSurplus)}</div>
-                                <div>CT pot {formatCurrency(metrics.potSnapshot.ctPotBalance)} − due {formatCurrency(metrics.corpTaxSetAside)} = {formatCurrency(metrics.availableAfterTax.ctSurplus)}</div>
+                                <div>VAT pot {formatCurrency(metrics.potSnapshot.vatPotBalance)} less owed {formatCurrency(metrics.vatSetAside)} = {formatCurrency(metrics.availableAfterTax.vatSurplus)}</div>
+                                <div>CT pot {formatCurrency(metrics.potSnapshot.ctPotBalance)} less due {formatCurrency(metrics.corpTaxSetAside)} = {formatCurrency(metrics.availableAfterTax.ctSurplus)}</div>
                             </> : 'Needs book balance and an up-to-date pot snapshot'}
                         </div>
                     </div>
@@ -912,17 +905,16 @@ export default function Dashboard({ onNavigate }) {
                     </div>
                 </div>
 
-                <div className="metric-card cashflow" title={`Money received minus money paid out during the selected period (${getPeriodLabel()}): paid invoices and VAT refunds in; expenses, director's loan repayments, tax, salary and dividends out. Transfers to and from the VAT / CT pots are excluded.\n\nThis is not your bank balance. A negative figure only means more went out than came in during this period - see Book Balance for what is in the account.`}>
+                <div className="metric-card cashflow">
                     <div className="metric-icon">📈</div>
                     <div className="metric-content">
-                        <div className="metric-label">Cash Flow (Net) <span aria-hidden="true" style={{ cursor: 'help' }}>ⓘ</span></div>
+                        <div className="metric-label">Cash Flow (Net)</div>
                         <div className={`metric-value ${metrics.cashFlowNet >= 0 ? 'positive' : 'negative'}`}>
                             {formatCurrency(metrics.cashFlowNet)}
                         </div>
                         <div className="metric-detail">
                             In: {formatCurrency(metrics.cashFlowIn)} | Out: {formatCurrency(metrics.cashFlowOut)}
                         </div>
-                        <div className="metric-detail">Movement in this period, not your balance</div>
                     </div>
                 </div>
             </div>
@@ -1098,12 +1090,10 @@ export default function Dashboard({ onNavigate }) {
                             <span>Income (net, excl. VAT):</span>
                             <span>{formatCurrency(metrics.ctIncomeNet)}</span>
                         </div>
-                        {metrics.ctBankInterest > 0 && (
-                            <div className="info-row" style={{fontSize: '0.9rem'}}>
-                                <span>Includes bank interest (taxable):</span>
-                                <span>{formatCurrency(metrics.ctBankInterest)}</span>
-                            </div>
-                        )}
+                        {metrics.ctBankInterest > 0 && <div className="info-row" style={{ fontSize: '0.9rem' }}>
+                            <span>Includes taxable bank interest:</span>
+                            <span>{formatCurrency(metrics.ctBankInterest)}</span>
+                        </div>}
                         <div className="info-row">
                             <span>Less: CT-allowable expenses:</span>
                             <span>-{formatCurrency(metrics.ctAllowableExpenseNet)}</span>
@@ -1346,12 +1336,10 @@ export default function Dashboard({ onNavigate }) {
                                 <td style={{ padding:'7px 4px', color:'#495057' }}>Income (net, excl. VAT)</td>
                                 <td style={{ padding:'7px 4px', textAlign:'right', fontWeight:500 }}>{formatCurrency(metrics.ctIncomeNet)}</td>
                             </tr>
-                            {metrics.ctBankInterest > 0 && (
-                                <tr style={{ borderBottom:'1px solid #f0f0f0' }}>
-                                    <td style={{ padding:'7px 4px', color:'#6c757d', fontSize:'0.85rem' }}>Includes bank interest from pots</td>
-                                    <td style={{ padding:'7px 4px', textAlign:'right', color:'#6c757d', fontSize:'0.85rem' }}>{formatCurrency(metrics.ctBankInterest)}</td>
-                                </tr>
-                            )}
+                            {metrics.ctBankInterest > 0 && <tr style={{ borderBottom:'1px solid #f0f0f0' }}>
+                                <td style={{ padding:'7px 4px', color:'#6c757d', fontSize:'0.85rem' }}>Includes taxable bank interest</td>
+                                <td style={{ padding:'7px 4px', textAlign:'right', color:'#6c757d', fontSize:'0.85rem' }}>{formatCurrency(metrics.ctBankInterest)}</td>
+                            </tr>}
                             <tr style={{ borderBottom:'1px solid #f0f0f0' }}>
                                 <td style={{ padding:'7px 4px', color:'#495057' }}>Less: CT-allowable expenses</td>
                                 <td style={{ padding:'7px 4px', textAlign:'right', color:'#dc3545' }}>−{formatCurrency(metrics.ctAllowableExpenseNet)}</td>

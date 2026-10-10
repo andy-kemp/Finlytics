@@ -11,6 +11,11 @@ using FinanceHubFunctions.Models;
 
 namespace FinanceHubFunctions.Helpers
 {
+    public sealed class BankDuplicateReviewException : InvalidOperationException
+    {
+        public BankDuplicateReviewException() : base("CSV and Monzo rows may represent the same payment; review duplicates before importing. No rows from this batch were saved.") { }
+    }
+
     public sealed record MonzoTransaction(string Id, DateTime CreatedUtc, long AmountPence, string? Description, string? MerchantName,
         string? Category, string? Notes, string? Reference, string? PotId, string? LocalCurrency, long? LocalAmountPence, bool Declined);
 
@@ -106,23 +111,39 @@ namespace FinanceHubFunctions.Helpers
         public static BankTransaction? FindExisting(MonzoTransaction tx, int accountId, IEnumerable<BankTransaction> existing) =>
             Match(tx, accountId, existing).Row;
 
+        public static bool PossibleCrossFeedDuplicate(BankTransaction left, BankTransaction right) =>
+            left.BankAccountId == right.BankAccountId && left.TransactionDate.HasValue && right.TransactionDate.HasValue
+            && left.TransactionDate.Value.Date == right.TransactionDate.Value.Date && left.Amount is > 0 && right.Amount is > 0
+            && Math.Abs(left.Amount.Value) == Math.Abs(right.Amount.Value) && left.Direction == right.Direction
+            && CashBaselinePolicy.IsInternal(left) == CashBaselinePolicy.IsInternal(right)
+            && ((left.Source == "CSV" && right.Source == Source) || (left.Source == Source && right.Source == "CSV"));
+
         public static (BankTransaction? Row, bool Ambiguous) Match(MonzoTransaction tx, int accountId, IEnumerable<BankTransaction> existing)
         {
             var rows = existing.Where(row => row.BankAccountId == accountId).ToList();
             var exact = rows.FirstOrDefault(row => row.ExternalId == tx.Id || row.MonzoTransactionId == tx.Id || row.TrueLayerTransactionId == tx.Id);
             if (exact != null) return (exact, false);
             var local = ToUkLocal(tx.CreatedUtc);
+            var exported = DateTime.SpecifyKind(tx.CreatedUtc, DateTimeKind.Unspecified);
             var amount = Math.Abs(tx.AmountPence) / 100m;
             var direction = tx.AmountPence > 0 ? "In" : "Out";
-            var candidates = rows.Where(row => row.TransactionDate.HasValue && Math.Abs((row.TransactionDate.Value - local).TotalMinutes) <= FingerprintWindow.TotalMinutes
+            var eligible = rows.Where(row => row.TransactionDate.HasValue
                 && Math.Abs(row.Amount ?? 0) == amount && row.Direction == direction && row.Source != Source
+                && CashBaselinePolicy.IsInternal(row) == (tx.PotId != null)
                 && (string.IsNullOrEmpty(row.MonzoTransactionId) || row.MonzoTransactionId == row.ExternalId)).ToList();
+            var exactTime = eligible.Where(row => Math.Abs((row.TransactionDate!.Value - local).TotalSeconds) < 1
+                || Math.Abs((row.TransactionDate!.Value - exported).TotalSeconds) < 1).ToList();
+            if (exactTime.Count == 1) return (exactTime[0], false);
+            if (exactTime.Count > 1) return (null, true);
+            var candidates = eligible.Where(row => Math.Abs((row.TransactionDate!.Value - local).TotalMinutes) <= FingerprintWindow.TotalMinutes
+                || Math.Abs((row.TransactionDate!.Value - exported).TotalMinutes) <= FingerprintWindow.TotalMinutes).ToList();
             if (candidates.Count == 1) return (candidates[0], false);
             if (candidates.Count > 1) return (null, true);
-            var possiblePotDuplicate = tx.PotId != null && rows.Any(row => row.Source != Source
-                && row.TransactionDate?.Date == local.Date && CashBaselinePolicy.IsInternal(row)
+            var possibleCsvDuplicate = rows.Any(row => row.Source == "CSV"
+                && row.TransactionDate?.Date == local.Date
+                && CashBaselinePolicy.IsInternal(row) == (tx.PotId != null)
                 && Math.Abs(row.Amount ?? 0) == amount && row.Direction == direction);
-            return (null, possiblePotDuplicate);
+            return (null, possibleCsvDuplicate);
         }
 
         public static (MonzoPot? Vat, MonzoPot? Ct) MatchTaxPots(IEnumerable<MonzoPot> pots)

@@ -67,7 +67,6 @@ export async function fetchApiBlob(url) {
     return response.blob();
 }
 
-// Opens the tab synchronously so popup blockers allow it, then loads the authenticated file into it.
 export async function openApiDocument(url) {
     const tab = window.open('', '_blank');
     try {
