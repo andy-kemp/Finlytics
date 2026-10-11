@@ -88,6 +88,8 @@ namespace FinanceHubFunctions.Services
 
         public async Task<bool> ReconnectNotified() => !string.IsNullOrEmpty(await Secret("MonzoReconnectNotifiedAtUtc", fresh: true));
 
+        public Task<string?> TaxPotDigestSentOn() => Secret("MonzoTaxPotDigestSentOn", fresh: true);
+
         public async Task<string?> AccountId() => await Secret("MonzoAccountId");
 
         public async Task Refresh(string? rejectedAccessToken = null)

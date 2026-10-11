@@ -47,6 +47,36 @@ cash movements occur. This cleanup did not create expenses or claim VAT.
 
 The temporary single-IP SQL firewall rule was removed after the transaction.
 
+## Daily Tax Pot Email
+
+After a successful scheduled Monzo sync (05:30 UTC), the app emails a comparison
+of the freshly fetched VAT/CT pots against saved-record estimates. Each row shows
+the actual balance, estimated amount due and either an estimated surplus to
+withdraw, a top-up needed, or a matching balance. No bank transfers are made.
+
+Recipient selection: `TaxPotNotificationEmail`, then `MonzoNotificationEmail`,
+then the default company's `CompanyEmail` or `Email`. Set
+`TaxPotDailyEmailEnabled=false` to disable the digest. Existing system SMTP
+configuration sends the message; no new email provider is required.
+
+The scheduled timer sends at most one successful digest per UK calendar day,
+using `MonzoTaxPotDigestSentOn` in Key Vault. Manual transaction syncs do not send
+digests. The sent date is saved only after SMTP reports success. An ambiguous
+SMTP failure may still mean the recipient received the email; exactly-once
+delivery cannot be guaranteed by SMTP. Notification failures do not roll back
+successful bank syncs.
+
+If Monzo cannot connect, existing reconnect notifications remain in effect.
+Missing tax pots or unresolved bank-sync warnings suppress transfer suggestions
+and the digest is skipped, with the reason recorded in application logs.
+
+VAT covers unfiled quarters using the dashboard's saved-record rules. CT includes
+allowable expenses, DLA-funded costs, taxable interest, applicable payroll and
+recorded CT payments. Both are estimates, not final HMRC liabilities.
+Browser-local manual VAT adjustments cannot be read by the scheduled backend and
+are explicitly excluded in the email. Review the dashboard before withdrawing
+funds, particularly when receipts or expenses are still unrecorded.
+
 ## Focused Checks
 
 ```sh

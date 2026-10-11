@@ -173,6 +173,7 @@ var host = new HostBuilder()
         services.AddSingleton<ReceiptAnalysisService>();
         services.AddScoped<MonzoClient>();
         services.AddScoped<MonzoSyncService>();
+        services.AddScoped<TaxPotNotificationService>();
         var storageConnectionString = context.Configuration["AzureWebJobsStorage"];
         var storageBlobServiceUri = context.Configuration["AzureWebJobsStorage__blobServiceUri"];
         if (!string.IsNullOrEmpty(storageConnectionString))

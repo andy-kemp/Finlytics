@@ -2,6 +2,18 @@ using System.Text.Json;
 using FinanceHubFunctions.Helpers;
 using FinanceHubFunctions.Models;
 
+if (args.Contains("--tax-parity"))
+{
+    var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+    var input = JsonSerializer.Deserialize<List<TaxFixture>>(Console.In.ReadToEnd(), options)!;
+    Console.WriteLine(JsonSerializer.Serialize(input.Select(fixture => new
+    {
+        vat = TaxPotEmailPolicy.UnfiledVat(fixture.Sources, fixture.Settings, fixture.FiledReturns, fixture.Now),
+        ct = TaxPotEmailPolicy.CorporationTax(fixture.Sources, fixture.Settings, fixture.Now)
+    }), options));
+    return;
+}
+
 void Check(bool condition, string name)
 {
     if (!condition) throw new Exception(name);
@@ -108,6 +120,26 @@ Check(!MonzoSyncPolicy.VerifyState("other", state, now), "state signed with anot
 Check(!MonzoSyncPolicy.VerifyState(secret, state.Replace("0123", "9123"), now) && !MonzoSyncPolicy.VerifyState(secret, null, now)
     && !MonzoSyncPolicy.VerifyState(secret, "1.2", now), "tampered or missing state refused");
 Console.WriteLine("All offline Monzo sync checks passed.");
+var vatComparison = new TaxPotComparison("VAT", 508.14m, 488.80m);
+var ctComparison = new TaxPotComparison("Corporation Tax", 958.53m, 927.03m);
+Check(vatComparison.Difference == 19.34m && ctComparison.Difference == 31.50m, "tax pots show screenshot surpluses exactly");
+Check(new TaxPotComparison("VAT", 100, 120).Suggestion.Contains("Top up by")
+    && vatComparison.Suggestion.Contains("withdraw") && new TaxPotComparison("VAT", 100, 100).Difference == 0, "email separates surplus, shortfall and equal pots");
+var taxSources = new RecordedCashSources
+{
+    Invoices = new() { new Invoice { Status = "Paid", DateIssued = new DateTime(2026, 10, 1), DatePaid = new DateTime(2026, 10, 1), AmountNet = 1000, VATAmount = 200 } },
+    Expenses = new() { new Expense { EntryDate = new DateTime(2026, 10, 2), AmountNet = 100, VATAmount = 20 } },
+    LedgerEntries = new() { new CompanyLedgerEntry { EntryType = "Interest_Received", Amount = 10, EffectiveDate = new DateTime(2026, 10, 1) } }
+};
+var taxSettings = new CompanySettings { CompanyInceptionDate = new DateTime(2026, 4, 1), VatQuarterStartMonth = 1, VatAccountingMethod = "cash" };
+Check(TaxPotEmailPolicy.CorporationTax(taxSources, taxSettings, now) == 172.90m, "daily CT includes taxable interest and allowable costs");
+Check(TaxPotEmailPolicy.UnfiledVat(taxSources, taxSettings, Array.Empty<VatReturn>(), now) == 180m, "daily VAT uses saved paid invoices and reclaimable costs");
+Check(TaxPotEmailPolicy.UnfiledVat(taxSources, taxSettings, new[] { new VatReturn { QuarterStartDate = new DateTime(2026, 10, 1) } }, now) == 0,
+    "filed VAT quarter excluded from daily estimate");
+Check(TaxPotEmailPolicy.Html(vatComparison, ctComparison, now, new[] { "<unsafe>" }).Contains("&lt;unsafe&gt;")
+    && TaxPotEmailPolicy.Html(vatComparison, ctComparison, now, Array.Empty<string>()).Contains("Browser-only manual VAT adjustments"), "email escapes warnings and discloses estimate limitations");
+Check(TaxPotEmailPolicy.Html(vatComparison, ctComparison, now, Array.Empty<string>()).Contains(TaxPotEmailPolicy.Money(50.84m)),
+    "daily email includes combined estimated surplus of 50.84");
 
 using var tokens = JsonDocument.Parse("""{"expires_in":21600}""");
 Check(MonzoConnectionPolicy.AccessExpiry(tokens.RootElement, now) == now.AddHours(6), "Monzo expiry comes from expires_in, not a made-up 90-day deadline");
@@ -120,3 +152,5 @@ Check(MonzoConnectionPolicy.EmailDue(false, now.AddDays(5), false, now)
 Check(!MonzoConnectionPolicy.Warn(false, null, now) && MonzoConnectionPolicy.EmailDue(true, null, true, now), "unknown expiry is not invented; failed renewal requires an email");
 
 BankTransaction with_amount() => new() { BankAccountId = 1, Source = "CSV", TransactionDate = csvRow.TransactionDate, Amount = 6.21m, Direction = "Out" };
+
+sealed record TaxFixture(RecordedCashSources Sources, CompanySettings Settings, List<VatReturn> FiledReturns, DateTime Now);

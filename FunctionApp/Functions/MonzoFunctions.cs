@@ -28,9 +28,10 @@ namespace FinanceHubFunctions.Functions
         private readonly FinanceHubDbContext _db;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly EmailService _email;
+        private readonly TaxPotNotificationService _taxPots;
 
         public MonzoFunctions(ILogger<MonzoFunctions> logger, MonzoClient monzo, MonzoSyncService sync,
-            FinanceHubDbContext db, IHttpClientFactory httpClientFactory, EmailService email)
+            FinanceHubDbContext db, IHttpClientFactory httpClientFactory, EmailService email, TaxPotNotificationService taxPots)
         {
             _logger = logger;
             _monzo = monzo;
@@ -38,6 +39,7 @@ namespace FinanceHubFunctions.Functions
             _db = db;
             _httpClientFactory = httpClientFactory;
             _email = email;
+            _taxPots = taxPots;
         }
 
         private static async Task<HttpResponseData> Json(HttpRequestData req, HttpStatusCode status, object value)
@@ -163,6 +165,7 @@ namespace FinanceHubFunctions.Functions
                 _logger.LogInformation("Monzo daily sync: {Imported} imported, {Linked} linked, {Interest} interest entries",
                     result.Imported, result.Linked, result.InterestRecorded.Count);
                 await NotifyReconnect(false);
+                await _taxPots.SendDaily(result);
             }
             catch (MonzoReconnectRequiredException exception)
             {
