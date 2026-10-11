@@ -54,6 +54,14 @@ test('recorded DLA batch repayment is not an unclaimed expense', () => {
     }
     const duplicate = bankAttention([bank, { ...bank, id: 201 }], records, '2026-10-03');
     assert.ok(duplicate.comparisons.every(comparison => comparison.status === 'Shared app payment - review'));
+    const typoBank = { ...bank, amount: 167.84, description: 'DLA-20261-004' };
+    const typoResult = bankAttention([typoBank], records, '2026-10-03');
+    assert.equal(typoResult.comparisons[0].status, 'DLA reference needs review');
+    assert.equal(typoResult.moneyOut, 0);
+    assert.equal(typoResult.missing.length, 0);
+    const typoProposals = buildMonthlyProposals({ transactions: [typoBank], comparisons: typoResult.comparisons, baselineDate: '2026-10-03' });
+    assert.equal(typoProposals[0].kind, 'review');
+    assert.deepEqual(buildMonthlyApplyRequest(1, typoProposals).actions, []);
 });
 
 test('baseline history, pot transfers and reconciled payments are excluded', () => {

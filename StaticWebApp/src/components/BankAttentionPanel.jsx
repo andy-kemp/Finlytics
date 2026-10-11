@@ -1,5 +1,6 @@
 import React from 'react';
 import './BankAttentionPanel.css';
+import { isDlaBankPayment } from '../utils/bankReconciliation.mjs';
 
 const money = value => new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(value);
 
@@ -27,7 +28,7 @@ export default function BankAttentionPanel({ attention, error, onReview }) {
                 <td data-label="Money Out">{transaction.direction === 'Out' ? money(transaction.amount) : '-'}</td>
                 <td data-label="Money In">{transaction.direction === 'In' ? money(transaction.amount) : '-'}</td>
                 <td data-label="Action"><button className="btn-secondary" disabled={duplicates || !onReview}
-                    onClick={() => onReview(transaction)}>{transaction.direction === 'Out' ? 'Record Expense' : 'Review Payment'}</button></td>
+                    onClick={() => onReview(transaction)}>{transaction.direction === 'Out' && !isDlaBankPayment(transaction) ? 'Record Expense' : 'Review Payment'}</button></td>
             </tr>)}</tbody>
         </table>}
     </section>;

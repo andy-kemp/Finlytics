@@ -4,6 +4,10 @@ import { buildSettlementProposal } from './foreignCurrency.mjs';
 const pennies = value => Math.round(Number(value || 0) * 100);
 const normalized = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
+export function isDlaBankPayment(transaction) {
+    return /\bDLA-\d{4,6}-\d+\b/i.test(`${transaction.reference || ''} ${transaction.description || ''} ${transaction.monzoNotes || ''}`);
+}
+
 export function compareBankToApp(transactions, { invoices = [], expenses = [], dlaEntries = [], dlaPayments = [], ledgerEntries = [] }) {
     const movements = [];
     const add = (type, id, amount, direction, date, reference, label) => {
@@ -74,7 +78,7 @@ export function compareBankToApp(transactions, { invoices = [], expenses = [], d
                 const settlement = buildSettlementProposal(expense, transaction);
                 return settlement ? [{ key: `Expense:${expense.id}`, expenseId: expense.id, label: expense.supplierFreeText || expense.supplier, ...settlement }] : [];
             }) : [];
-        return { status: recordedBatches.length === 1 ? 'Recorded DLA payment' : settlementCandidates.length ? 'FX settlement - review' : candidates.length === 1 ? 'Suggested match' : candidates.length > 1 ? 'Multiple matches - review' : 'Missing app payment', candidates, settlementCandidates };
+        return { status: recordedBatches.length === 1 ? 'Recorded DLA payment' : settlementCandidates.length ? 'FX settlement - review' : candidates.length === 1 ? 'Suggested match' : candidates.length > 1 ? 'Multiple matches - review' : isDlaBankPayment(transaction) ? 'DLA reference needs review' : 'Missing app payment', candidates, settlementCandidates };
     });
     const uses = new Map();
     comparisons.forEach(comparison => comparison.candidates.forEach(candidate => uses.set(candidate.key, (uses.get(candidate.key) || 0) + 1)));
