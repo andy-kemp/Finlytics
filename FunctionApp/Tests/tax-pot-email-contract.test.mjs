@@ -11,6 +11,8 @@ test('daily digest runs only after a successful scheduled Monzo sync, not manual
     const source = read('Functions/MonzoFunctions.cs');
     const daily = source.slice(source.indexOf('[Function("MonzoDailySync")]'), source.indexOf('private async Task NotifyReconnect'));
     assert.ok(daily.indexOf('await _sync.Sync()') < daily.indexOf('await _taxPots.SendDaily(result)'));
+    assert.ok(daily.includes('TimerTrigger("0 30 5,13,19 * * *")'));
+    assert.ok(daily.includes('if (result.SyncedAtUtc.Hour == 5) await _taxPots.SendDaily(result)'));
     const manual = source.slice(source.indexOf('[Function("MonzoSync")]'), source.indexOf('[Function("MonzoDailySync")]'));
     assert.ok(!manual.includes('SendDaily'));
     assert.ok(read('Program.cs').includes('AddScoped<TaxPotNotificationService>'));

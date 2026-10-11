@@ -606,7 +606,7 @@ export default function Banking({ reviewAccountId = null, reviewTransactionId = 
                             </div>
                             <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: 2 }}>
                                 {monzoStatus.connected
-                                    ? 'Transactions and pot balances sync automatically every morning; pot interest is recorded as taxable income.'
+                                    ? 'Automatic sync: 05:30, 13:30 and 19:30 UTC. Daily tax-pot email after the morning sync.'
                                     : monzoStatus.unavailable
                                         ? 'Could not check the Monzo connection.'
                                         : monzoStatus.message || 'Connect Monzo, then approve Finlytics in the Monzo app.'}

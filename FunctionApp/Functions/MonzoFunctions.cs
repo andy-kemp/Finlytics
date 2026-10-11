@@ -157,7 +157,7 @@ namespace FinanceHubFunctions.Functions
         }
 
         [Function("MonzoDailySync")]
-        public async Task DailySync([TimerTrigger("0 30 5 * * *")] TimerInfo timer)
+        public async Task DailySync([TimerTrigger("0 30 5,13,19 * * *")] TimerInfo timer)
         {
             try
             {
@@ -165,7 +165,7 @@ namespace FinanceHubFunctions.Functions
                 _logger.LogInformation("Monzo daily sync: {Imported} imported, {Linked} linked, {Interest} interest entries",
                     result.Imported, result.Linked, result.InterestRecorded.Count);
                 await NotifyReconnect(false);
-                await _taxPots.SendDaily(result);
+                if (result.SyncedAtUtc.Hour == 5) await _taxPots.SendDaily(result);
             }
             catch (MonzoReconnectRequiredException exception)
             {

@@ -49,6 +49,10 @@ The temporary single-IP SQL firewall rule was removed after the transaction.
 
 ## Daily Tax Pot Email
 
+Monzo automatically syncs at 05:30, 13:30 and 19:30 UTC each day. In the UK these
+are 06:30, 14:30 and 20:30 during BST, and the UTC times during GMT. Afternoon
+and evening runs refresh bank data without sending the daily tax-pot digest.
+
 After a successful scheduled Monzo sync (05:30 UTC), the app emails a comparison
 of the freshly fetched VAT/CT pots against saved-record estimates. Each row shows
 the actual balance, estimated amount due and either an estimated surplus to
