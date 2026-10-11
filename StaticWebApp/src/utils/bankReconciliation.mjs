@@ -20,6 +20,24 @@ export function compareBankToApp(transactions, { invoices = [], expenses = [], d
     dlaPayments.forEach(payment => add('DLA-Payment', payment.id, payment.amount,
         loans.get(payment.dlaId)?.direction === 'OwedToCompany' ? 'In' : 'Out', payment.paymentDate,
         payment.dlaId, `DLA payment ${payment.paymentId || payment.dlaId}`));
+    const dlaBatches = new Map();
+    const invalidBatchReferences = new Set();
+    dlaPayments.forEach(payment => {
+        const reference = String(payment.paymentReference || '').match(/^DLA-\d{6}-\d{3}(?=\s|$)/i)?.[0]?.toUpperCase();
+        const loan = loans.get(payment.dlaId);
+        if (!reference) return;
+        if (!loan || !['OwedToCompany', 'OwedToDirector'].includes(loan.direction) || !payment.paymentDate || !(Number(payment.amount) > 0)) {
+            invalidBatchReferences.add(reference);
+            return;
+        }
+        const direction = loan.direction === 'OwedToCompany' ? 'In' : 'Out';
+        const date = String(payment.paymentDate).slice(0, 10);
+        const key = `${reference}:${date}:${direction}`;
+        const batch = dlaBatches.get(key) || { reference, date, direction, amount: 0, payments: [] };
+        batch.amount += pennies(payment.amount);
+        batch.payments.push(payment.id);
+        dlaBatches.set(key, batch);
+    });
     const ledgerOut = new Set(['Dividend_Paid', 'CorpTax_Paid', 'VAT_Paid', 'Salary', 'PAYE', 'DLA_Out', 'DLA_Payment']);
     const ledgerIn = new Set(['VAT_Reclaim', 'DLA_In']);
     ledgerEntries.forEach(entry => {
@@ -31,7 +49,15 @@ export function compareBankToApp(transactions, { invoices = [], expenses = [], d
     const comparisons = transactions.map(transaction => {
         if (transaction.category === 'Internal Transfer') return { status: 'Internal pot transfer', candidates: [] };
         const text = normalized(`${transaction.reference || ''} ${transaction.description || ''}`);
-        const candidates = movements.filter(movement => {
+        const recordedBatches = [...dlaBatches.values()].filter(batch =>
+            !invalidBatchReferences.has(batch.reference) && batch.direction === transaction.direction && batch.amount === pennies(transaction.amount)
+            && batch.date === String(transaction.transactionDate).slice(0, 10)
+            && new RegExp(`(?:^|[^A-Z0-9-])${batch.reference}(?![A-Z0-9-])`, 'i')
+                .test(`${transaction.reference || ''} ${transaction.description || ''} ${transaction.monzoMerchantName || ''}`));
+        const candidates = recordedBatches.length ? recordedBatches.map(batch => ({
+            key: `DLA-Batch:${batch.reference}:${batch.date}:${batch.direction}`, type: 'DLA-Batch',
+            id: batch.reference, label: `Recorded DLA batch ${batch.reference}`, paymentIds: batch.payments
+        })) : movements.filter(movement => {
             if (movement.direction !== transaction.direction || movement.amount !== pennies(transaction.amount)) return false;
             const reference = normalized(movement.reference);
             const days = Math.abs(new Date(movement.date.substring(0, 10)) - new Date(transaction.transactionDate.substring(0, 10))) / 86400000;
@@ -48,7 +74,7 @@ export function compareBankToApp(transactions, { invoices = [], expenses = [], d
                 const settlement = buildSettlementProposal(expense, transaction);
                 return settlement ? [{ key: `Expense:${expense.id}`, expenseId: expense.id, label: expense.supplierFreeText || expense.supplier, ...settlement }] : [];
             }) : [];
-        return { status: settlementCandidates.length ? 'FX settlement - review' : candidates.length === 1 ? 'Suggested match' : candidates.length > 1 ? 'Multiple matches - review' : 'Missing app payment', candidates, settlementCandidates };
+        return { status: recordedBatches.length === 1 ? 'Recorded DLA payment' : settlementCandidates.length ? 'FX settlement - review' : candidates.length === 1 ? 'Suggested match' : candidates.length > 1 ? 'Multiple matches - review' : 'Missing app payment', candidates, settlementCandidates };
     });
     const uses = new Map();
     comparisons.forEach(comparison => comparison.candidates.forEach(candidate => uses.set(candidate.key, (uses.get(candidate.key) || 0) + 1)));

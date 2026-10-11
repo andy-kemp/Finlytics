@@ -65,6 +65,7 @@ export function buildMonthlyProposals({ transactions, comparisons = [], existing
         if (reconciled.has(transaction.externalId)) return { ...base, kind: 'done', reason: 'Already reconciled' };
         if (transaction.category === 'Internal Transfer') return { ...base, kind: 'internal', reason: 'Pot transfer' };
         const comparison = comparisons[index];
+        if (comparison?.status === 'Recorded DLA payment') return { ...base, kind: 'done', reason: 'DLA repayment already recorded' };
         const candidates = (comparison?.candidates || []).filter(candidate => LINK_TYPES.includes(candidate.type));
         if (comparison?.status === 'Suggested match' && candidates.length === 1) {
             const [candidate] = candidates;

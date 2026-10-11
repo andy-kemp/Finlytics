@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { bankAttention } from './bankAttention.mjs';
+import { buildMonthlyProposals, buildMonthlyApplyRequest } from './monthlyReconciliation.mjs';
 
 const payments = [
     { id: 69, externalId: 'mm_pret', description: 'Pret', amount: 6.20 },
@@ -25,6 +26,34 @@ test('existing CSV payments remain outstanding even when sync imports zero new r
     const linked = bankAttention(payments.map(transaction => ({ ...transaction, monzoTransactionId: `tx_${transaction.id}` })), {}, '2026-10-03');
     assert.deepEqual(linked.missing.map(transaction => transaction.id), [69, 70, 71]);
     assert.equal(linked.moneyOut, 53.15);
+});
+
+test('recorded DLA batch repayment is not an unclaimed expense', () => {
+    const bank = { id: 200, externalId: 'tx_dla_batch', transactionDate: '2026-10-11', direction: 'Out', amount: 163.96,
+        description: 'DLA-202610-003', source: 'Monzo', isReconciled: false };
+    const records = {
+        dlaEntries: [{ dlaId: 'DLA-A', direction: 'OwedToDirector' }, { dlaId: 'DLA-B', direction: 'OwedToDirector' }],
+        dlaPayments: [{ id: 301, dlaId: 'DLA-A', amount: 100, paymentDate: '2026-10-11', paymentReference: 'DLA-202610-003 (BATCH-20261011-090000)' },
+            { id: 302, dlaId: 'DLA-B', amount: 63.96, paymentDate: '2026-10-11', paymentReference: 'DLA-202610-003 (BATCH-20261011-090000)' }]
+    };
+    const result = bankAttention([bank], records, '2026-10-03');
+    assert.equal(result.missing.length, 0);
+    assert.equal(result.moneyOut, 0);
+    assert.equal(result.comparisons[0].status, 'Recorded DLA payment');
+    const proposals = buildMonthlyProposals({ transactions: [bank], comparisons: result.comparisons, baselineDate: '2026-10-03' });
+    assert.equal(proposals[0].kind, 'done');
+    assert.equal(proposals[0].selected, false);
+    assert.deepEqual(buildMonthlyApplyRequest(1, proposals).actions, []);
+    const incomplete = { ...records, dlaPayments: [...records.dlaPayments, {
+        id: 303, dlaId: 'missing-loan', amount: 10, paymentDate: '2026-10-11', paymentReference: 'DLA-202610-003 (BATCH-20261011-090000)'
+    }] };
+    assert.notEqual(bankAttention([bank], incomplete, '2026-10-03').comparisons[0].status, 'Recorded DLA payment');
+    for (const change of [{ amount: 164 }, { direction: 'In' }, { transactionDate: '2026-10-12' },
+        { description: 'DLA-202610-0034' }]) {
+        assert.notEqual(bankAttention([{ ...bank, ...change }], records, '2026-10-03').comparisons[0].status, 'Recorded DLA payment');
+    }
+    const duplicate = bankAttention([bank, { ...bank, id: 201 }], records, '2026-10-03');
+    assert.ok(duplicate.comparisons.every(comparison => comparison.status === 'Shared app payment - review'));
 });
 
 test('baseline history, pot transfers and reconciled payments are excluded', () => {
