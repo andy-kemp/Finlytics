@@ -4,8 +4,9 @@ import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
+import { fileURLToPath } from 'node:url';
 
-const server = await createServer({ root: new URL('../../', import.meta.url).pathname, server: { middlewareMode: true, hmr: false }, appType: 'custom' });
+const server = await createServer({ root: fileURLToPath(new URL('../../', import.meta.url)), server: { middlewareMode: true, hmr: false }, appType: 'custom' });
 after(() => server.close());
 const { default: ForeignCurrencyFields } = await server.ssrLoadModule('/src/components/ForeignCurrencyFields.jsx');
 const value = { originalCurrency: 'EUR', originalAmountNet: '100', originalVatAmount: '20', originalAmountGross: '120', exchangeRateToGbp: '0.85', exchangeRateDate: '2026-10-07', exchangeRateSource: 'Verified', amountNet: '102', vatAmount: '0', amountGross: '102', actualGbpPaid: '103', settlementDate: '2026-10-08' };

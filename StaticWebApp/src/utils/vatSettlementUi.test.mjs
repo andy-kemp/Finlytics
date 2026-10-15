@@ -4,10 +4,11 @@ import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
+import { fileURLToPath } from 'node:url';
 import { todayDate } from './vatSettlement.mjs';
 
 const server = await createServer({
-    root: new URL('../../', import.meta.url).pathname,
+    root: fileURLToPath(new URL('../../', import.meta.url)),
     server: { middlewareMode: true, hmr: false }, appType: 'custom',
     plugins: [{ name: 'vat-test-api', enforce: 'pre', resolveId(source, importer) {
         if (source.endsWith('/services/apiService') && importer?.endsWith('VatSettlementModal.jsx')) return '\0vat-test-api';

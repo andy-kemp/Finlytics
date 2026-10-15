@@ -1,0 +1,75 @@
+name: Tests
+
+on:
+  pull_request:
+    paths:
+      - 'FunctionApp/**'
+      - 'StaticWebApp/**'
+      - '.github/workflows/tests.yml'
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    name: Frontend unit tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: StaticWebApp/package-lock.json
+
+      - name: Install dependencies
+        working-directory: StaticWebApp
+        run: npm ci
+
+      - name: Run tests
+        working-directory: StaticWebApp
+        run: node --test src/utils/*.test.mjs
+
+  backend:
+    runs-on: ubuntu-latest
+    name: Backend tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: StaticWebApp/package-lock.json
+
+      # Contract tests import shared calculation modules from the frontend
+      - name: Install frontend dependencies
+        working-directory: StaticWebApp
+        run: npm ci
+
+      - name: Build Function App
+        working-directory: FunctionApp
+        run: dotnet build --configuration Release
+
+      - name: Run C# test programs
+        working-directory: FunctionApp
+        run: |
+          for project in Tests/*/*.csproj; do
+            echo "::group::$project"
+            dotnet run --project "$project"
+            echo "::endgroup::"
+          done
+
+      # Serial: several contract tests run `dotnet run` and would collide on build output in parallel
+      - name: Run contract tests
+        working-directory: FunctionApp
+        env:
+          DOTNET_PATH: dotnet
+        run: node --test --test-concurrency=1 Tests/*.test.mjs

@@ -9,9 +9,13 @@ on:
   workflow_dispatch:
 
 jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+
   build-and-deploy:
     runs-on: ubuntu-latest
     name: Build and Deploy SWA
+    needs: tests
     steps:
       - uses: actions/checkout@v4
 
