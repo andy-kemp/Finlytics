@@ -1,15 +1,61 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace FinanceHubFunctions.Services
 {
     /// <summary>
+    /// PAYE / Class 1 NI rates for one tax year (6 April to 5 April).
+    /// Bands are on cumulative taxable income (after the tax-code allowance); NI thresholds are monthly.
+    /// Source: GOV.UK "Rates and thresholds for employers" for each year.
+    /// </summary>
+    internal sealed record PayrollTaxYearRates(
+        int StartYear,
+        (decimal UpTo, decimal Rate)[] EnglandBands,
+        (decimal UpTo, decimal Rate)[] ScottishBands,
+        decimal LowerEarningsLimitMonthly,
+        decimal PrimaryThresholdMonthly,
+        decimal UpperEarningsLimitMonthly,
+        decimal SecondaryThresholdMonthly,
+        decimal EmployeeMainRate,
+        decimal EmployeeUpperRate,
+        decimal EmployerRate);
+
+    /// <summary>
     /// Shared static helpers for payroll calculations — used by both the HTTP
     /// PayrollFunctions and the PayrollSchedulerFunction timer trigger.
-    /// All rates are for UK tax year 2025-26.
+    /// Rates are looked up per tax year; a year without rates fails loudly instead of using stale figures.
     /// </summary>
     internal static class PayrollCalculations
     {
+        private static readonly (decimal, decimal)[] EnglandBands2025To2027 =
+            { (37700m, 0.20m), (125140m, 0.40m), (decimal.MaxValue, 0.45m) };
+
+        private static readonly Dictionary<int, PayrollTaxYearRates> Rates = new()
+        {
+            [2025] = new(2025,
+                EnglandBands2025To2027,
+                new[] { (2827m, 0.19m), (14921m, 0.20m), (31092m, 0.21m), (62430m, 0.42m), (125140m, 0.45m), (decimal.MaxValue, 0.48m) },
+                LowerEarningsLimitMonthly: 542m, PrimaryThresholdMonthly: 1048m, UpperEarningsLimitMonthly: 4189m,
+                SecondaryThresholdMonthly: 417m, EmployeeMainRate: 0.08m, EmployeeUpperRate: 0.02m, EmployerRate: 0.15m),
+            [2026] = new(2026,
+                EnglandBands2025To2027,
+                new[] { (3967m, 0.19m), (16956m, 0.20m), (31092m, 0.21m), (62430m, 0.42m), (125140m, 0.45m), (decimal.MaxValue, 0.48m) },
+                LowerEarningsLimitMonthly: 559m, PrimaryThresholdMonthly: 1048m, UpperEarningsLimitMonthly: 4189m,
+                SecondaryThresholdMonthly: 417m, EmployeeMainRate: 0.08m, EmployeeUpperRate: 0.02m, EmployerRate: 0.15m)
+        };
+
+        /// <summary>Rates for the tax year containing <paramref name="payDate"/>.</summary>
+        public static PayrollTaxYearRates RatesFor(DateTime payDate) => RatesFor(GetTaxYear(payDate));
+
+        /// <summary>Rates for a tax year string such as "2026-27".</summary>
+        public static PayrollTaxYearRates RatesFor(string? taxYear)
+        {
+            if (int.TryParse(taxYear?.Split('-')[0], out var startYear) && Rates.TryGetValue(startYear, out var rates)) return rates;
+            throw new InvalidOperationException(
+                $"Payroll rates for tax year {taxYear} are not configured. Add them to PayrollCalculations before running payroll.");
+        }
+
         // ── Tax year / month helpers ──────────────────────────────────────────
 
         /// <summary>Returns HMRC tax month 1–12 for a given pay date (tax year starts 6 April).</summary>
@@ -67,28 +113,25 @@ namespace FinanceHubFunctions.Services
 
         // ── National Insurance ────────────────────────────────────────────────
 
-        /// <summary>Calculates employee NI using 2025-26 Category A rates (per-period method).
-        /// PT = £1,047.50/mo, rate 8% up to UEL £4,189.17/mo, then 2%.</summary>
-        public static decimal CalcEmployeeNI(decimal grossPay, string? niCategory = "A")
+        /// <summary>Employee Class 1 NI for a monthly pay period. Category C (over State Pension age) pays nil.</summary>
+        public static decimal CalcEmployeeNI(decimal grossPay, string? niCategory, PayrollTaxYearRates rates)
         {
-            if (niCategory == "C") return 0m; // Over state pension age
-            const decimal PT  = 1047.50m;
-            const decimal UEL = 4189.17m;
-            if (grossPay <= PT) return 0m;
-            decimal ni = grossPay <= UEL
-                ? (grossPay - PT) * 0.08m
-                : (UEL - PT) * 0.08m + (grossPay - UEL) * 0.02m;
+            if (niCategory == "C") return 0m;
+            var pt = rates.PrimaryThresholdMonthly;
+            var uel = rates.UpperEarningsLimitMonthly;
+            if (grossPay <= pt) return 0m;
+            decimal ni = grossPay <= uel
+                ? (grossPay - pt) * rates.EmployeeMainRate
+                : (uel - pt) * rates.EmployeeMainRate + (grossPay - uel) * rates.EmployeeUpperRate;
             return Math.Round(ni, 2);
         }
 
-        /// <summary>Calculates employer NI using 2025-26 rates.
-        /// Secondary threshold = £416.67/mo, rate 15%.</summary>
-        public static decimal CalcEmployerNI(decimal grossPay, string? niCategory = "A")
+        /// <summary>Employer Class 1 NI for a monthly pay period. Employers still pay for category C employees.</summary>
+        public static decimal CalcEmployerNI(decimal grossPay, string? niCategory, PayrollTaxYearRates rates)
         {
-            if (niCategory == "C") return 0m;
-            const decimal ST = 416.67m;
-            if (grossPay <= ST) return 0m;
-            return Math.Round((grossPay - ST) * 0.15m, 2);
+            var st = rates.SecondaryThresholdMonthly;
+            if (grossPay <= st) return 0m;
+            return Math.Round((grossPay - st) * rates.EmployerRate, 2);
         }
 
         // ── Income tax (cumulative method) ────────────────────────────────────
@@ -98,7 +141,7 @@ namespace FinanceHubFunctions.Services
         /// emergency codes: BR, D0, D1, SBR, SD0-SD3, NT, 0T.</summary>
         public static decimal CalcTax(
             decimal ytdGrossBefore, decimal ytdTaxBefore,
-            decimal grossThisPeriod, string? taxCode, int taxMonth)
+            decimal grossThisPeriod, string? taxCode, int taxMonth, PayrollTaxYearRates rates)
         {
             var upper = (taxCode ?? "1257L").Trim().ToUpperInvariant();
 
@@ -120,33 +163,25 @@ namespace FinanceHubFunctions.Services
             decimal newYtdGross       = ytdGrossBefore + grossThisPeriod;
             decimal taxable           = Math.Max(0m, newYtdGross - cumulativeFreePay);
 
-            decimal newTotalTax = isScottish
-                ? CalcTaxOnTaxableScottish(taxable)
-                : CalcTaxOnTaxableEngland(taxable);
+            // Bands are applied cumulatively: taxMonth/12 of each annual band to date
+            decimal newTotalTax = TaxOnTaxable(taxable, isScottish ? rates.ScottishBands : rates.EnglandBands, taxMonth / 12m);
 
             return Math.Round(Math.Max(0m, Math.Round(newTotalTax, 2) - ytdTaxBefore), 2);
         }
 
-        /// <summary>England &amp; Wales 2025-26: tax on cumulative taxable income.</summary>
-        public static decimal CalcTaxOnTaxableEngland(decimal taxable)
+        /// <summary>Tax on taxable income across the bands, each scaled by <paramref name="bandFraction"/>.</summary>
+        public static decimal TaxOnTaxable(decimal taxable, (decimal UpTo, decimal Rate)[] bands, decimal bandFraction = 1m)
         {
-            if (taxable <= 0)       return 0m;
-            if (taxable <= 37700m)  return taxable * 0.20m;
-            if (taxable <= 125140m) return 37700m * 0.20m + (taxable - 37700m) * 0.40m;
-            return                         37700m * 0.20m + 87440m * 0.40m + (taxable - 125140m) * 0.45m;
-        }
-
-        /// <summary>Scotland 2025-26: tax on cumulative taxable income.
-        /// Starter 19% / Basic 20% / Intermediate 21% / Higher 42% / Advanced 45% / Top 48%</summary>
-        public static decimal CalcTaxOnTaxableScottish(decimal taxable)
-        {
-            if (taxable <= 0)       return 0m;
-            if (taxable <= 2827m)   return taxable * 0.19m;
-            if (taxable <= 12726m)  return  2827m * 0.19m + (taxable -  2827m) * 0.20m;
-            if (taxable <= 31092m)  return  2827m * 0.19m +  9899m * 0.20m + (taxable - 12726m) * 0.21m;
-            if (taxable <= 62430m)  return  2827m * 0.19m +  9899m * 0.20m + 18366m * 0.21m + (taxable - 31092m) * 0.42m;
-            if (taxable <= 112570m) return  2827m * 0.19m +  9899m * 0.20m + 18366m * 0.21m + 31338m * 0.42m + (taxable - 62430m) * 0.45m;
-            return                           2827m * 0.19m +  9899m * 0.20m + 18366m * 0.21m + 31338m * 0.42m + 50140m * 0.45m + (taxable - 112570m) * 0.48m;
+            if (taxable <= 0) return 0m;
+            decimal tax = 0m, lower = 0m;
+            foreach (var (upTo, rate) in bands)
+            {
+                var top = upTo == decimal.MaxValue ? decimal.MaxValue : upTo * bandFraction;
+                if (taxable <= top) return tax + (taxable - lower) * rate;
+                tax += (top - lower) * rate;
+                lower = top;
+            }
+            return tax;
         }
     }
 }

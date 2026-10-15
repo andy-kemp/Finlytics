@@ -328,13 +328,12 @@ namespace FinanceHubFunctions.Functions
         private static string  GetTaxYear(DateTime d)                          => PayrollCalculations.GetTaxYear(d);
         private static decimal ParseTaxCodeAllowance(string? tc)               => PayrollCalculations.ParseTaxCodeAllowance(tc);
         private static bool    IsScottishTaxCode(string? tc)                   => PayrollCalculations.IsScottishTaxCode(tc);
-        private static decimal CalcEmployeeNI(decimal g, string? cat = "A")    => PayrollCalculations.CalcEmployeeNI(g, cat);
-        private static decimal CalcEmployerNI(decimal g, string? cat = "A")    => PayrollCalculations.CalcEmployerNI(g, cat);
-        private static decimal CalcTaxOnTaxableEngland(decimal t)              => PayrollCalculations.CalcTaxOnTaxableEngland(t);
-        private static decimal CalcTaxOnTaxableScottish(decimal t)             => PayrollCalculations.CalcTaxOnTaxableScottish(t);
+        private static decimal CalcEmployeeNI(decimal g, string? cat, PayrollTaxYearRates rates) => PayrollCalculations.CalcEmployeeNI(g, cat, rates);
+        private static decimal CalcEmployerNI(decimal g, string? cat, PayrollTaxYearRates rates) => PayrollCalculations.CalcEmployerNI(g, cat, rates);
         private static decimal CalcTax(
             decimal ytdGrossBefore, decimal ytdTaxBefore,
-            decimal grossThisPeriod, string? taxCode, int taxMonth)            => PayrollCalculations.CalcTax(ytdGrossBefore, ytdTaxBefore, grossThisPeriod, taxCode, taxMonth);
+            decimal grossThisPeriod, string? taxCode, int taxMonth, PayrollTaxYearRates rates)
+            => PayrollCalculations.CalcTax(ytdGrossBefore, ytdTaxBefore, grossThisPeriod, taxCode, taxMonth, rates);
 
         // ── Generate Payroll Run ──────────────────────────────────────────────
 
@@ -372,6 +371,18 @@ namespace FinanceHubFunctions.Functions
             var payDate   = new DateTime(year, month, payDay);
             int taxMonth  = GetTaxMonth(payDate);
             string taxYear = GetTaxYear(payDate);
+
+            PayrollTaxYearRates rates;
+            try
+            {
+                rates = PayrollCalculations.RatesFor(taxYear);
+            }
+            catch (InvalidOperationException ex)
+            {
+                var noRates = req.CreateResponse(HttpStatusCode.BadRequest);
+                await noRates.WriteAsJsonAsync(new { error = ex.Message });
+                return noRates;
+            }
 
             // Duplicate check
             var existing = await _db.PayrollRuns
@@ -419,9 +430,9 @@ namespace FinanceHubFunctions.Functions
                 decimal ytdEmpNIBefore = priorPayslips.Sum(p => p.NationalInsurance ?? 0m);
                 decimal ytdErNIBefore  = priorPayslips.Sum(p => p.EmployerNi ?? 0m);
 
-                decimal tax    = CalcTax(ytdGrossBefore, ytdTaxBefore, grossPay, taxCode, taxMonth);
-                decimal empNI  = CalcEmployeeNI(grossPay, niCat);
-                decimal erNI   = CalcEmployerNI(grossPay, niCat);
+                decimal tax    = CalcTax(ytdGrossBefore, ytdTaxBefore, grossPay, taxCode, taxMonth, rates);
+                decimal empNI  = CalcEmployeeNI(grossPay, niCat, rates);
+                decimal erNI   = CalcEmployerNI(grossPay, niCat, rates);
                 decimal netPay = grossPay - tax - empNI;
 
                 payslips.Add(new Payslip

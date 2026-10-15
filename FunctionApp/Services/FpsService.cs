@@ -34,11 +34,6 @@ namespace FinanceHubFunctions.Services
         private const string SOFTWARE_NAME    = "FinanceHub";
         private const string SOFTWARE_VERSION = "1.0";
 
-        // 2025-26 NI monthly thresholds (rounded)
-        private const decimal LEL_MONTHLY = 533m;   // Lower Earnings Limit
-        private const decimal PT_MONTHLY  = 1048m;  // Primary Threshold
-        private const decimal UEL_MONTHLY = 4189m;  // Upper Earnings Limit
-
         // Both sandbox and production now use the same endpoint.
         private const string PROD_URL = "https://transaction-engine.tax.service.gov.uk/submission";
 
@@ -139,7 +134,7 @@ namespace FinanceHubFunctions.Services
                 var taxCode    = (slip.TaxCode    ?? settings.DefaultTaxCode    ?? "1257L").Replace(" ", "");
 
                 // NI band calculations (approximate from YTD gross)
-                var (atLEL, lelToPT, ptToUEL) = CalcNiBands(ytdGross, taxM);
+                var (atLEL, lelToPT, ptToUEL) = CalcNiBands(ytdGross, taxM, PayrollCalculations.RatesFor(run.TaxYear));
 
                 var payment = new XElement(fpsNs + "Payment",
                     new XElement(fpsNs + "TaxWeekMonth",         taxM),
@@ -260,11 +255,11 @@ namespace FinanceHubFunctions.Services
         /// Approximate YTD NI band figures from cumulative gross and tax month.
         /// Returns (AtLEL, LELtoPT, PTtoUEL) rounded to 2 decimal places.
         /// </summary>
-        private static (decimal atLEL, decimal lelToPT, decimal ptToUEL) CalcNiBands(decimal ytdGross, int taxMonth)
+        private static (decimal atLEL, decimal lelToPT, decimal ptToUEL) CalcNiBands(decimal ytdGross, int taxMonth, PayrollTaxYearRates rates)
         {
-            var maxLEL = taxMonth * LEL_MONTHLY;
-            var maxPT  = taxMonth * PT_MONTHLY;
-            var maxUEL = taxMonth * UEL_MONTHLY;
+            var maxLEL = taxMonth * rates.LowerEarningsLimitMonthly;
+            var maxPT  = taxMonth * rates.PrimaryThresholdMonthly;
+            var maxUEL = taxMonth * rates.UpperEarningsLimitMonthly;
 
             var atLEL   = Math.Round(Math.Min(ytdGross, maxLEL), 2);
             var lelToPT = Math.Round(Math.Max(0m, Math.Min(ytdGross, maxPT)  - atLEL),          2);

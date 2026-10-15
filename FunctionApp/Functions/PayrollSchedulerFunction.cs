@@ -94,6 +94,17 @@ namespace FinanceHubFunctions.Functions
             var taxYear  = PayrollCalculations.GetTaxYear(payDate);
             var taxMonth = PayrollCalculations.GetTaxMonth(payDate);
 
+            PayrollTaxYearRates rates;
+            try
+            {
+                rates = PayrollCalculations.RatesFor(taxYear);
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogError(ex, "PayrollAutoScheduler: {Message} — skipping", ex.Message);
+                return;
+            }
+
             var existing = await _db.PayrollRuns
                 .AnyAsync(r => r.TaxYear == taxYear && r.TaxMonth == taxMonth);
             if (existing)
@@ -140,9 +151,9 @@ namespace FinanceHubFunctions.Functions
                 decimal ytdEmpNIBefore = priorPayslips.Sum(p => p.NationalInsurance ?? 0m);
                 decimal ytdErNIBefore  = priorPayslips.Sum(p => p.EmployerNi ?? 0m);
 
-                decimal tax   = PayrollCalculations.CalcTax(ytdGrossBefore, ytdTaxBefore, grossPay, taxCode, taxMonth);
-                decimal empNI = PayrollCalculations.CalcEmployeeNI(grossPay, niCat);
-                decimal erNI  = PayrollCalculations.CalcEmployerNI(grossPay, niCat);
+                decimal tax   = PayrollCalculations.CalcTax(ytdGrossBefore, ytdTaxBefore, grossPay, taxCode, taxMonth, rates);
+                decimal empNI = PayrollCalculations.CalcEmployeeNI(grossPay, niCat, rates);
+                decimal erNI  = PayrollCalculations.CalcEmployerNI(grossPay, niCat, rates);
                 decimal net   = grossPay - tax - empNI;
 
                 payslips.Add(new Payslip
