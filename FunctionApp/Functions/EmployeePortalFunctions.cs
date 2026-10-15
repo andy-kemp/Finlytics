@@ -609,6 +609,16 @@ namespace FinanceHubFunctions.Functions
                 return notFound;
             }
 
+            var inviteCheck = InvitePolicy.Check(member.InvitedAt, member.Email, await _clerkAuth.GetVerifiedEmailsAsync(clerkUser), DateTime.UtcNow);
+            if (inviteCheck == InviteCheck.EmailUnverified)
+                Console.WriteLine($"EmployeeAcceptInvite: could not verify email for {clerkUser.UserId}; add email to the Clerk session token or set CLERK_SECRET_KEY");
+            else if (inviteCheck != InviteCheck.Ok)
+            {
+                var refused = req.CreateResponse(HttpStatusCode.BadRequest);
+                await refused.WriteAsJsonAsync(new { error = InvitePolicy.Message(inviteCheck) });
+                return refused;
+            }
+
             // Link Clerk user to team member
             member.ClerkUserId = clerkUser.UserId;
             // Only overwrite DisplayName if Clerk provides a real name

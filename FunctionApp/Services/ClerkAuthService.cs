@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Security.Claims;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.IdentityModel.Tokens;
@@ -74,6 +77,16 @@ namespace FinanceHubFunctions.Services
                 if (validatedToken is not JwtSecurityToken jwtToken)
                     return null;
 
+                // Optional: only accept tokens issued to our own portal origins
+                var authorizedParties = (Environment.GetEnvironmentVariable("CLERK_AUTHORIZED_PARTIES") ?? "")
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                var azp = principal.FindFirst("azp")?.Value;
+                if (authorizedParties.Length > 0 && !authorizedParties.Contains(azp, StringComparer.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine($"Clerk token rejected: unexpected azp '{azp}'");
+                    return null;
+                }
+
                 return new ClerkUser
                 {
                     UserId = principal.FindFirst("sub")?.Value ?? string.Empty,
@@ -91,6 +104,39 @@ namespace FinanceHubFunctions.Services
             {
                 Console.WriteLine($"Clerk token validation failed: {ex.Message}");
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// Verified email addresses for the signed-in user: the token's email claim if present,
+        /// otherwise looked up via the Clerk Backend API when CLERK_SECRET_KEY is set. Empty if unknown.
+        /// </summary>
+        public async Task<IReadOnlyCollection<string>> GetVerifiedEmailsAsync(ClerkUser user)
+        {
+            if (!string.IsNullOrWhiteSpace(user.Email)) return new[] { user.Email };
+            var secretKey = Environment.GetEnvironmentVariable("CLERK_SECRET_KEY");
+            if (string.IsNullOrEmpty(secretKey) || string.IsNullOrEmpty(user.UserId)) return Array.Empty<string>();
+            try
+            {
+                using var httpClient = new HttpClient();
+                using var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.clerk.com/v1/users/{Uri.EscapeDataString(user.UserId)}");
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secretKey);
+                using var response = await httpClient.SendAsync(request);
+                if (!response.IsSuccessStatusCode) return Array.Empty<string>();
+                using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                if (!document.RootElement.TryGetProperty("email_addresses", out var addresses)) return Array.Empty<string>();
+                return addresses.EnumerateArray()
+                    .Where(address => address.TryGetProperty("verification", out var verification)
+                        && verification.ValueKind == JsonValueKind.Object
+                        && verification.TryGetProperty("status", out var status) && status.GetString() == "verified")
+                    .Select(address => address.GetProperty("email_address").GetString() ?? "")
+                    .Where(email => email.Length > 0)
+                    .ToList();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Clerk user email lookup failed: {ex.Message}");
+                return Array.Empty<string>();
             }
         }
 

@@ -8,6 +8,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.EntityFrameworkCore;
 using FinanceHubFunctions.Data;
+using FinanceHubFunctions.Helpers;
 using FinanceHubFunctions.Models;
 using FinanceHubFunctions.Services;
 
@@ -374,6 +375,16 @@ namespace FinanceHubFunctions.Functions
                 {
                     var bad = req.CreateResponse(HttpStatusCode.BadRequest);
                     await bad.WriteAsJsonAsync(new { error = "Accountant record not found" });
+                    return bad;
+                }
+
+                var inviteCheck = InvitePolicy.Check(link.InvitedAt, accountant.Email, await _clerkAuth.GetVerifiedEmailsAsync(clerkUser), DateTime.UtcNow);
+                if (inviteCheck == InviteCheck.EmailUnverified)
+                    Console.WriteLine($"AccountantAcceptInvite: could not verify email for {clerkUser.UserId}; add email to the Clerk session token or set CLERK_SECRET_KEY");
+                else if (inviteCheck != InviteCheck.Ok)
+                {
+                    var bad = req.CreateResponse(HttpStatusCode.BadRequest);
+                    await bad.WriteAsJsonAsync(new { error = InvitePolicy.Message(inviteCheck) });
                     return bad;
                 }
 
