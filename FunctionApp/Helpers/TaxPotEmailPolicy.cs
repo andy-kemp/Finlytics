@@ -21,21 +21,59 @@ namespace FinanceHubFunctions.Helpers
         public static string Money(decimal amount) => amount.ToString("C2", CultureInfo.GetCultureInfo("en-GB"));
         private static decimal Pennies(decimal amount) => decimal.Round(amount, 2, MidpointRounding.AwayFromZero);
 
+        /// <summary>
+        /// Unpaid Corporation Tax: each accounting period since inception is taxed separately
+        /// (limits pro-rated for short periods, trading losses carried forward), less all CT paid.
+        /// </summary>
         public static decimal CorporationTax(RecordedCashSources sources, CompanySettings settings, DateTime now)
         {
             var taxYear = now.Date < new DateTime(now.Year, 4, 6) ? now.Year - 1 : now.Year;
-            var start = settings.CompanyInceptionDate ?? settings.IncorporationDate ?? new DateTime(taxYear, 4, 6);
-            var income = sources.Invoices.Where(invoice => invoice.Status == "Paid" && invoice.DateIssued >= start).Sum(invoice => invoice.AmountNet)
-                + sources.LedgerEntries.Where(entry => entry.EntryType == "Interest_Received" && entry.EffectiveDate >= start).Sum(entry => entry.Amount);
-            var costs = sources.Expenses.Where(expense => !expense.IsDLA && expense.EntryDate >= start && expense.CtTag != "NonCT")
-                .Sum(expense => expense.AmountNet ?? 0)
-                + sources.DlaEntries.Where(entry => entry.Direction == "OwedToDirector" && entry.CtTag != "NonCT").Sum(entry => entry.AmountNet);
-            var yearLedger = sources.LedgerEntries.Where(entry => entry.EffectiveDate >= new DateTime(taxYear, 4, 6)
-                && entry.EffectiveDate < new DateTime(taxYear + 1, 4, 6)).ToList();
-            if (sources.IncludePayroll) costs += yearLedger.Where(entry => entry.EntryType is "Salary" or "EmployerNI").Sum(entry => entry.Amount);
-            var profit = income - costs;
-            var estimate = CompanyLedgerCalculations.CalcCorporationTaxEstimate(profit, new TaxConfig());
-            return Pennies(Math.Max(0, estimate - yearLedger.Where(entry => entry.EntryType == "CorpTax_Paid").Sum(entry => entry.Amount)));
+            var inception = (settings.CompanyInceptionDate ?? settings.IncorporationDate ?? new DateTime(taxYear, 4, 6)).Date;
+            decimal totalTax = 0, lossesBroughtForward = 0;
+            foreach (var (start, end) in AccountingPeriods(inception, settings, now))
+            {
+                bool InPeriod(DateTime? date) => date >= start && date < end;
+                var income = sources.Invoices.Where(invoice => invoice.Status == "Paid" && InPeriod(invoice.DateIssued)).Sum(invoice => invoice.AmountNet)
+                    + sources.LedgerEntries.Where(entry => entry.EntryType == "Interest_Received" && InPeriod(entry.EffectiveDate)).Sum(entry => entry.Amount);
+                var costs = sources.Expenses.Where(expense => !expense.IsDLA && InPeriod(expense.EntryDate) && expense.CtTag != "NonCT")
+                    .Sum(expense => expense.AmountNet ?? 0)
+                    + sources.DlaEntries.Where(entry => entry.Direction == "OwedToDirector" && InPeriod(entry.EntryDate) && entry.CtTag != "NonCT")
+                        .Sum(entry => entry.AmountNet);
+                if (sources.IncludePayroll)
+                    costs += sources.LedgerEntries.Where(entry => entry.EntryType is "Salary" or "EmployerNI" && InPeriod(entry.EffectiveDate)).Sum(entry => entry.Amount);
+
+                var profit = income - costs - lossesBroughtForward;
+                lossesBroughtForward = Math.Max(0, -profit);
+                var share = (decimal)(end - start).TotalDays / 365m;
+                var defaults = new TaxConfig();
+                totalTax += CompanyLedgerCalculations.CalcCorporationTaxEstimate(profit, new TaxConfig
+                {
+                    LimitLower = defaults.LimitLower * Math.Min(1, share),
+                    LimitUpper = defaults.LimitUpper * Math.Min(1, share)
+                });
+            }
+            var paid = sources.LedgerEntries.Where(entry => entry.EntryType == "CorpTax_Paid" && entry.EffectiveDate >= inception).Sum(entry => entry.Amount);
+            return Pennies(Math.Max(0, totalTax - paid));
+        }
+
+        /// <summary>
+        /// Accounting periods from inception up to the one containing <paramref name="now"/>, ending on the
+        /// financial year start (FYStartMonth/FYStartDay, else the inception anniversary) and never longer than 12 months.
+        /// </summary>
+        public static IEnumerable<(DateTime Start, DateTime End)> AccountingPeriods(DateTime inception, CompanySettings settings, DateTime now)
+        {
+            var month = settings.FYStartMonth is >= 1 and <= 12 ? settings.FYStartMonth.Value : inception.Month;
+            var day = settings.FYStartMonth is >= 1 and <= 12 ? settings.FYStartDay ?? 1 : inception.Day;
+            DateTime Boundary(int year) => new(year, month, Math.Clamp(day, 1, DateTime.DaysInMonth(year, month)));
+
+            for (var start = inception.Date; start <= now.Date;)
+            {
+                var next = Boundary(start.Year);
+                if (next <= start) next = Boundary(start.Year + 1);
+                var end = next < start.AddYears(1) ? next : start.AddYears(1);
+                yield return (start, end);
+                start = end;
+            }
         }
 
         private static bool Blocked(string? category, string? currency, string? ctTag, bool trivial) =>

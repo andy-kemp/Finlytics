@@ -10,6 +10,7 @@
     <Compile Include="../../Helpers/MonzoSyncPolicy.cs" Link="MonzoSyncPolicy.cs" />
     <Compile Include="../../Helpers/MonzoConnectionPolicy.cs" Link="MonzoConnectionPolicy.cs" />
     <Compile Include="../../Helpers/TaxPotEmailPolicy.cs" Link="TaxPotEmailPolicy.cs" />
+    <Compile Include="../../Services/CompanyLedgerCalculations.cs" Link="CompanyLedgerCalculations.cs" />
     <Compile Include="../../Models/CompanySettings.cs" Link="CompanySettings.cs" />
     <Compile Include="../../Models/VatReturn.cs" Link="VatReturn.cs" />
     <Compile Include="../../Helpers/CashBaselinePolicy.cs" Link="CashBaselinePolicy.cs" />

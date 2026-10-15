@@ -133,6 +133,26 @@ var taxSources = new RecordedCashSources
 };
 var taxSettings = new CompanySettings { CompanyInceptionDate = new DateTime(2026, 4, 1), VatQuarterStartMonth = 1, VatAccountingMethod = "cash" };
 Check(TaxPotEmailPolicy.CorporationTax(taxSources, taxSettings, now) == 172.90m, "daily CT includes taxable interest and allowable costs");
+var ctNow = new DateTime(2026, 10, 11);
+var twoYearSettings = new CompanySettings { CompanyInceptionDate = new DateTime(2025, 4, 1) };
+var twoYears = new RecordedCashSources
+{
+    Invoices = new() { new Invoice { Status = "Paid", DateIssued = new DateTime(2025, 9, 1), AmountNet = 60000 },
+        new Invoice { Status = "Paid", DateIssued = new DateTime(2026, 6, 1), AmountNet = 10000 } },
+    LedgerEntries = new() { new CompanyLedgerEntry { EntryType = "CorpTax_Paid", Amount = 12150, EffectiveDate = new DateTime(2026, 9, 1) } }
+};
+Check(TaxPotEmailPolicy.CorporationTax(twoYears, twoYearSettings, ctNow) == 1900m, "CT taxes each accounting period separately, less all CT paid");
+var lossYears = new RecordedCashSources
+{
+    Invoices = new() { new Invoice { Status = "Paid", DateIssued = new DateTime(2026, 6, 1), AmountNet = 15000 } },
+    Expenses = new() { new Expense { EntryDate = new DateTime(2025, 9, 1), AmountNet = 5000 } }
+};
+Check(TaxPotEmailPolicy.CorporationTax(lossYears, twoYearSettings, ctNow) == 1900m, "trading loss carried forward to the next period");
+var shortSettings = new CompanySettings { CompanyInceptionDate = new DateTime(2026, 7, 1), FYStartMonth = 1, FYStartDay = 1 };
+Check(TaxPotEmailPolicy.AccountingPeriods(shortSettings.CompanyInceptionDate.Value, shortSettings, ctNow).Single()
+    == (new DateTime(2026, 7, 1), new DateTime(2027, 1, 1)), "first period ends at the financial year start");
+var shortPeriod = new RecordedCashSources { Invoices = new() { new Invoice { Status = "Paid", DateIssued = new DateTime(2026, 8, 1), AmountNet = 40000 } } };
+Check(TaxPotEmailPolicy.CorporationTax(shortPeriod, shortSettings, ctNow) == 8709.59m, "short period pro-rates the marginal relief limits");
 Check(TaxPotEmailPolicy.UnfiledVat(taxSources, taxSettings, Array.Empty<VatReturn>(), now) == 180m, "daily VAT uses saved paid invoices and reclaimable costs");
 Check(TaxPotEmailPolicy.UnfiledVat(taxSources, taxSettings, new[] { new VatReturn { QuarterStartDate = new DateTime(2026, 10, 1) } }, now) == 0,
     "filed VAT quarter excluded from daily estimate");
