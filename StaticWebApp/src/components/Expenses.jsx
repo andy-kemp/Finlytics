@@ -345,6 +345,7 @@ const Expenses = ({ openNew }) => {
             case 'zero-rated':
             case 'exempt':
             case 'outside scope':
+            case 'reverse charge':
             case 'not applicable':
             case 'no vat':
                 return 0;

@@ -1326,7 +1326,8 @@ namespace FinanceHubFunctions.Services
                 "Reduced",
                 "Zero-rated",
                 "Exempt",
-                "Outside Scope"
+                "Outside Scope",
+                "Reverse Charge"
             };
 
             return predefinedChoices;

@@ -76,3 +76,24 @@ test('eligible UK director-funded claims retain VAT relief while foreign claims 
     assert.equal(result.vatOut, 25);
     assert.equal(dlaEntries[0].amountGross, 120);
 });
+test('reverse charge adds output VAT to Box 1, reclaims it in Box 4 and includes the value in Boxes 6 and 7', () => {
+    const expenses = [
+        { vatApplicability: 'Reverse Charge', originalCurrency: 'USD', entryDate: '2026-07-01', amountNet: 100, vatAmount: 0 },
+        { vatApplicability: 'Standard', entryDate: '2026-07-01', amountNet: 50, vatAmount: 10 }
+    ];
+    const invoices = [{ status: 'Paid', datePaid: '2026-07-10', amountNet: 1000, vatAmount: 200 }];
+    const result = calculateVatForQuarter(quarter, { invoices, expenses, dlaEntries: [], settings: {}, displayQuarters: [quarter] });
+    assert.equal(result.reverseChargeVat, 20);
+    assert.equal(result.vatIn, 220);
+    assert.equal(result.vatOut, 30);
+    assert.equal(result.vatOwed, 190);
+    assert.equal(result.salesExVat, 1100);
+    assert.equal(result.purchasesExVat, 150);
+});
+
+test('reverse charge on blocked input tax is declared but not reclaimed', () => {
+    const expenses = [{ vatApplicability: 'reverse charge', category: 'Client Entertainment', entryDate: '2026-07-01', amountNet: 100, vatAmount: 0 }];
+    const result = calculateVatForQuarter(quarter, { invoices: [], expenses, dlaEntries: [], settings: {}, displayQuarters: [quarter] });
+    assert.equal(result.vatIn, 20);
+    assert.equal(result.vatOut, 0);
+});

@@ -1,13 +1,25 @@
 export const VAT_ADJUSTMENTS_STORAGE_KEY = 'finlytics.vatQuarterAdjustments.v1';
 
-export function isVatReclaimBlocked(item) {
+export const REVERSE_CHARGE_RATE = 0.20;
+
+// Input tax that can never be reclaimed, whoever charged it (business entertainment, trivial benefits, non-business costs)
+export function isInputTaxBlocked(item) {
     const category = (item.category || '').toLowerCase();
-    const currency = String(item.originalCurrency || 'GBP').trim().toUpperCase();
-    return currency === 'EUR' || currency === 'USD'
-        || category.includes('entertainment')
+    return category.includes('entertainment')
         || category === 'trivial benefit'
         || item.isTrivialBenefit === true
         || item.ctTag === 'NonCT';
+}
+
+// VAT shown on a purchase invoice that cannot go in Box 4: foreign VAT, or blocked input tax
+export function isVatReclaimBlocked(item) {
+    const currency = String(item.originalCurrency || 'GBP').trim().toUpperCase();
+    return currency === 'EUR' || currency === 'USD' || isInputTaxBlocked(item);
+}
+
+// Services bought from an overseas supplier with no UK VAT charged: the buyer accounts for the VAT
+export function isReverseCharge(item) {
+    return String(item.vatApplicability || '').trim().toLowerCase() === 'reverse charge';
 }
 
 export function getVatQuarterPeriods(vatQuarterStartMonth = 1, numQuarters = 8) {
@@ -125,8 +137,16 @@ export function calculateVatForQuarter(quarter, {
     };
 
     const vatOutExpenses = expenses
-        .filter((expense) => !isVatReclaimBlocked(expense) && expenseApplies(expense))
+        .filter((expense) => !isReverseCharge(expense) && !isVatReclaimBlocked(expense) && expenseApplies(expense))
         .reduce((sum, expense) => sum + (expense.vatAmount || 0), 0);
+
+    // Reverse charge: output VAT in Box 1, the same amount reclaimed in Box 4 unless blocked
+    const reverseChargeItems = expenses.filter((expense) => isReverseCharge(expense) && expenseApplies(expense));
+    const reverseChargeNet = reverseChargeItems.reduce((sum, item) => sum + (item.amountNet || 0), 0);
+    const reverseChargeVat = reverseChargeNet * REVERSE_CHARGE_RATE;
+    const reverseChargeReclaim = reverseChargeItems
+        .filter((item) => !isInputTaxBlocked(item))
+        .reduce((sum, item) => sum + (item.amountNet || 0) * REVERSE_CHARGE_RATE, 0);
     const vatOutDla = dlaEntries
         .filter((entry) => entry.direction === 'OwedToDirector'
             && !isVatReclaimBlocked(entry) && expenseApplies(entry))
@@ -146,17 +166,21 @@ export function calculateVatForQuarter(quarter, {
         ...expenses.filter(expenseApplies),
         ...dlaEntries.filter((entry) => entry.direction === 'OwedToDirector' && expenseApplies(entry))
     ].reduce((sum, item) => sum + (item.amountNet || 0), 0);
-    const vatOutBase = vatOutExpenses + vatOutDla;
+    const vatInBase = vatIn + reverseChargeVat;
+    const vatOutBase = vatOutExpenses + vatOutDla + reverseChargeReclaim;
     const box1Adjustment = Number(adjustment.box1) || 0;
     const box4Adjustment = Number(adjustment.box4) || 0;
-    const vatInAdjusted = vatIn + box1Adjustment;
+    const vatInAdjusted = vatInBase + box1Adjustment;
     const vatOutAdjusted = vatOutBase + box4Adjustment;
 
     return {
         vatIn: vatInAdjusted,
         vatOut: vatOutAdjusted,
-        vatInBase: vatIn,
+        vatInBase,
         vatOutBase,
+        reverseChargeNet,
+        reverseChargeVat,
+        reverseChargeReclaim,
         adjustment: { ...adjustment, box1: box1Adjustment, box4: box4Adjustment },
         vatOutExpenses,
         vatOutDla,
@@ -164,7 +188,8 @@ export function calculateVatForQuarter(quarter, {
         isOldestDisplayedQuarter,
         vatExcludedItems,
         vatExcludedTotal,
-        salesExVat,
+        // Box 6 includes the value of reverse-charge services received (they are also in Box 7)
+        salesExVat: salesExVat + reverseChargeNet,
         purchasesExVat
     };
 }

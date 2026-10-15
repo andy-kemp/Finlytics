@@ -1597,6 +1597,11 @@ export default function VatReturns() {
                                     <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#155724' }}>
                                         {fmt(filingCalc.vatIn)}
                                     </div>
+                                    {filingCalc.reverseChargeVat > 0 && (
+                                        <div style={{ fontSize: '0.72rem', color: '#6c757d', marginTop: 2 }}>
+                                            incl. reverse charge {fmt(filingCalc.reverseChargeVat)}
+                                        </div>
+                                    )}
                                 </div>
                                 <div style={{
                                     background: '#fff8f8', border: '1px solid #f5c6cb',
@@ -1609,6 +1614,11 @@ export default function VatReturns() {
                                     {filingCalc.vatOutDla > 0 && (
                                         <div style={{ fontSize: '0.72rem', color: '#6c757d', marginTop: 2 }}>
                                             incl. DLA {fmt(filingCalc.vatOutDla)}
+                                        </div>
+                                    )}
+                                    {filingCalc.reverseChargeReclaim > 0 && (
+                                        <div style={{ fontSize: '0.72rem', color: '#6c757d', marginTop: 2 }}>
+                                            incl. reverse charge {fmt(filingCalc.reverseChargeReclaim)}
                                         </div>
                                     )}
                                     {filingCalc.vatExcludedTotal > 0 && (

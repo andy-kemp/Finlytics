@@ -37,7 +37,9 @@ test('server tax-pot VAT estimates agree with dashboard saved-record calculation
         expenses: [{ entryDate: '2026-10-02', amountNet: 100, vatAmount: 20 },
             { entryDate: '2026-03-01', amountNet: 50, vatAmount: 10 },
             { entryDate: '2026-10-02', amountNet: 100, vatAmount: 20, category: 'Client Entertainment', ctTag: 'NonCT' },
-            { entryDate: '2026-10-02', amountNet: 100, vatAmount: 20, originalCurrency: 'USD' }],
+            { entryDate: '2026-10-02', amountNet: 100, vatAmount: 20, originalCurrency: 'USD' },
+            { entryDate: '2026-10-02', amountNet: 300, vatAmount: 0, originalCurrency: 'USD', vatApplicability: 'Reverse Charge', isDLA: true },
+            { entryDate: '2026-10-02', amountNet: 80, vatAmount: 0, vatApplicability: 'Reverse Charge', ctTag: 'NonCT' }],
         dlaEntries: [{ dlaId: 'DLA-test', direction: 'OwedToDirector', entryDate: '2026-10-03', amountNet: 50, vatAmount: 10 }],
         ledgerEntries: [{ entryType: 'Interest_Received', amount: 10, effectiveDate: '2026-10-01' }]
     };

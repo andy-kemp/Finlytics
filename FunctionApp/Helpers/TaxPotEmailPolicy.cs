@@ -107,9 +107,17 @@ namespace FinanceHubFunctions.Helpers
             }
         }
 
-        private static bool Blocked(string? category, string? currency, string? ctTag, bool trivial) =>
-            currency?.ToUpperInvariant() is "EUR" or "USD" || (category ?? "").Contains("entertainment", StringComparison.OrdinalIgnoreCase)
+        private const decimal ReverseChargeRate = 0.20m;
+
+        private static bool InputTaxBlocked(string? category, string? ctTag, bool trivial) =>
+            (category ?? "").Contains("entertainment", StringComparison.OrdinalIgnoreCase)
             || string.Equals(category, "trivial benefit", StringComparison.OrdinalIgnoreCase) || trivial || ctTag == "NonCT";
+
+        private static bool Blocked(string? category, string? currency, string? ctTag, bool trivial) =>
+            currency?.ToUpperInvariant() is "EUR" or "USD" || InputTaxBlocked(category, ctTag, trivial);
+
+        private static bool IsReverseCharge(string? vatApplicability) =>
+            string.Equals(vatApplicability?.Trim(), "Reverse Charge", StringComparison.OrdinalIgnoreCase);
 
         public static decimal UnfiledVat(RecordedCashSources sources, CompanySettings settings, IEnumerable<VatReturn> filedReturns, DateTime now)
         {
@@ -144,11 +152,14 @@ namespace FinanceHubFunctions.Helpers
                     if (preInception && first) return true;
                     return first && invoice.DateIssued < start;
                 }).Sum(invoice => invoice.VATAmount);
-                var expenseVat = sources.Expenses.Where(expense => Applies(expense.EntryDate)
+                var expenseVat = sources.Expenses.Where(expense => Applies(expense.EntryDate) && !IsReverseCharge(expense.VATApplicability)
                     && !Blocked(expense.Category, expense.OriginalCurrency, expense.CtTag, expense.IsTrivialBenefit)).Sum(expense => expense.VATAmount ?? 0);
+                // Reverse charge: declared in Box 1, reclaimed in Box 4 unless the input tax is blocked
+                var reverseChargeDue = sources.Expenses.Where(expense => Applies(expense.EntryDate) && IsReverseCharge(expense.VATApplicability)
+                    && InputTaxBlocked(expense.Category, expense.CtTag, expense.IsTrivialBenefit)).Sum(expense => (expense.AmountNet ?? 0) * ReverseChargeRate);
                 var dlaVat = sources.DlaEntries.Where(entry => entry.Direction == "OwedToDirector" && Applies(entry.EntryDate)
                     && !Blocked(entry.Category, entry.OriginalCurrency, entry.CtTag, entry.IsTrivialBenefit)).Sum(entry => entry.VatAmount);
-                total += invoiceVat - expenseVat - dlaVat;
+                total += invoiceVat + reverseChargeDue - expenseVat - dlaVat;
             }
             return Pennies(total);
         }
