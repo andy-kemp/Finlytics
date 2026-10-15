@@ -540,7 +540,6 @@ export async function testSmtpConfiguration(email) {
 }
 
 export async function updateCompanySettings(settings) {
-    console.log('updateCompanySettings called with:', settings);
     
     // Convert empty strings to null for numeric fields
     const converted = {

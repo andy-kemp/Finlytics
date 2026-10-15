@@ -52,33 +52,15 @@ namespace FinanceHubFunctions.Functions
                     await _dbContext.SaveChangesAsync();
                 }
                 
-                // Get SMTP password from Key Vault if needed
-                if (!string.IsNullOrEmpty(settings.SmtpUsername))
-                {
-                    try
-                    {
-                        settings.SmtpPassword = await _keyVaultService.GetSmtpPasswordAsync();
-                    }
-                    catch
-                    {
-                        // Password might not exist in Key Vault yet
-                        settings.SmtpPassword = null;
-                    }
-                }
-                
-                // Get HMRC Gateway password from Key Vault if credentials exist
-                if (!string.IsNullOrEmpty(settings.HmrcGatewayUserId))
-                {
-                    try
-                    {
-                        settings.HmrcGatewayPassword = await _keyVaultService.GetHmrcGatewayPasswordAsync();
-                    }
-                    catch
-                    {
-                        settings.HmrcGatewayPassword = null;
-                    }
-                }
-                
+                // Never send stored credentials to the browser — only whether they are set
+                settings.HasSmtpPassword = !string.IsNullOrEmpty(settings.SmtpUsername)
+                    && await HasSecretAsync(_keyVaultService.GetSmtpPasswordAsync);
+                settings.HasHmrcGatewayPassword = !string.IsNullOrEmpty(settings.HmrcGatewayUserId)
+                    && await HasSecretAsync(_keyVaultService.GetHmrcGatewayPasswordAsync);
+                _dbContext.Entry(settings).State = EntityState.Detached;
+                settings.SmtpPassword = null;
+                settings.HmrcGatewayPassword = null;
+
                 var response = req.CreateResponse(HttpStatusCode.OK);
                 await response.WriteAsJsonAsync(settings);
                 return response;
@@ -90,6 +72,19 @@ namespace FinanceHubFunctions.Functions
                 var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
                 await errorResponse.WriteAsJsonAsync(new { error = $"Failed to get company settings: {ex.Message}" });
                 return errorResponse;
+            }
+        }
+
+        private static async Task<bool> HasSecretAsync(Func<Task<string?>> getSecret)
+        {
+            try
+            {
+                return !string.IsNullOrEmpty(await getSecret());
+            }
+            catch
+            {
+                // Secret might not exist in Key Vault yet
+                return false;
             }
         }
 

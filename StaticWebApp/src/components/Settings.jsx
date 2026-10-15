@@ -199,9 +199,10 @@ const Settings = () => {
                     allowDataDeletion: data.allowDataDeletion || false,
                     allowDividendDeletion: data.allowDividendDeletion || false,
                     hmrcGatewayUserId: data.hmrcGatewayUserId || '',
-                    hmrcGatewayPassword: data.hmrcGatewayPassword || '',
+                    hmrcGatewayPassword: '',
+                    hasSmtpPassword: !!data.hasSmtpPassword,
+                    hasHmrcGatewayPassword: !!data.hasHmrcGatewayPassword,
                 };
-                console.log('Settings to display:', loadedSettings);
                 setSettings(loadedSettings);
                 
                 // Load signatures onto canvases
@@ -998,7 +999,7 @@ const Settings = () => {
                                     name="smtpPassword"
                                     value={settings.smtpPassword}
                                     onChange={handleChange}
-                                    placeholder="Leave blank to keep existing"
+                                    placeholder={settings.hasSmtpPassword ? 'Saved — leave blank to keep existing' : 'Not set'}
                                 />
                                 <small>🔐 Stored securely in Azure Key Vault</small>
                             </div>
@@ -1378,7 +1379,7 @@ const Settings = () => {
                                     name="hmrcGatewayPassword"
                                     value={settings.hmrcGatewayPassword || ''}
                                     onChange={handleChange}
-                                    placeholder="Stored securely in Key Vault"
+                                    placeholder={settings.hasHmrcGatewayPassword ? 'Saved — leave blank to keep existing' : 'Not set'}
                                     autoComplete="new-password"
                                 />
                                 <small style={{color: '#666', fontSize: '0.85rem'}}>⚠️ Stored in Azure Key Vault — not in the database. Leave blank to keep existing password.</small>

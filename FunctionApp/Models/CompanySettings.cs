@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace FinanceHubFunctions.Models
 {
@@ -67,6 +68,9 @@ namespace FinanceHubFunctions.Models
         public bool? AllowDataDeletion { get; set; }    // Master switch: when false, ALL record deletion is blocked (production safety)
         public bool? AllowDividendDeletion { get; set; } // Legacy/granular: also allows dividend deletion (either flag enables it)
         public string? HmrcGatewayUserId { get; set; }   // HMRC Online Services User ID (used for VAT MTD & Payroll RTI)
-        public string? HmrcGatewayPassword { get; set; } // NOT stored in DB — Key Vault only (transient, for save/load)
+        public string? HmrcGatewayPassword { get; set; } // NOT stored in DB — Key Vault only (write-only, never returned)
+
+        [NotMapped] public bool HasSmtpPassword { get; set; }        // Read-only status for the settings screen
+        [NotMapped] public bool HasHmrcGatewayPassword { get; set; } // Read-only status for the settings screen
     }
 }
