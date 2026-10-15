@@ -93,23 +93,26 @@ export function calculateVatForQuarter(quarter, {
         : null;
     const usePaymentDate = settings?.vatAccountingMethod !== 'invoice';
 
-    const vatIn = invoices.reduce((sum, invoice) => {
+    const invoiceApplies = (invoice) => {
         if (usePaymentDate) {
-            if (!invoice.datePaid || invoice.status !== 'Paid') return sum;
+            if (!invoice.datePaid || invoice.status !== 'Paid') return false;
             const date = new Date(invoice.datePaid);
-            return date >= start && date <= end ? sum + (invoice.vatAmount || 0) : sum;
+            return date >= start && date <= end;
         }
 
-        if (!invoice.dateIssued) return sum;
+        if (!invoice.dateIssued) return false;
         const date = new Date(invoice.dateIssued);
         const isPreInception = inceptionDate && date < inceptionDate;
-        if (!isPreInception && date >= start && date <= end) return sum + (invoice.vatAmount || 0);
-        if (isPreInception && isFirstVatQuarter) return sum + (invoice.vatAmount || 0);
-        if (isFirstVatQuarter && !isPreInception && inceptionDate && date >= inceptionDate && date < start)
-            return sum + (invoice.vatAmount || 0);
-        if (!inceptionDate && isOldestDisplayedQuarter && date < start) return sum + (invoice.vatAmount || 0);
-        return sum;
-    }, 0);
+        if (!isPreInception && date >= start && date <= end) return true;
+        if (isPreInception && isFirstVatQuarter) return true;
+        if (isFirstVatQuarter && !isPreInception && inceptionDate && date >= inceptionDate && date < start) return true;
+        return !inceptionDate && isOldestDisplayedQuarter && date < start;
+    };
+
+    const quarterInvoices = invoices.filter(invoiceApplies);
+    const vatIn = quarterInvoices.reduce((sum, invoice) => sum + (invoice.vatAmount || 0), 0);
+    // Box 6: net sales value in GBP, same population as Box 1
+    const salesExVat = quarterInvoices.reduce((sum, invoice) => sum + (invoice.amountNet || 0), 0);
 
     const expenseApplies = (item) => {
         if (!item.entryDate) return false;
@@ -138,6 +141,11 @@ export function calculateVatForQuarter(quarter, {
             .map((entry) => ({ ...entry, source: 'DLA' }))
     ];
     const vatExcludedTotal = vatExcludedItems.reduce((sum, item) => sum + (item.vatAmount || 0), 0);
+    // Box 7: net value of all purchases in the period, including those whose VAT is not reclaimable
+    const purchasesExVat = [
+        ...expenses.filter(expenseApplies),
+        ...dlaEntries.filter((entry) => entry.direction === 'OwedToDirector' && expenseApplies(entry))
+    ].reduce((sum, item) => sum + (item.amountNet || 0), 0);
     const vatOutBase = vatOutExpenses + vatOutDla;
     const box1Adjustment = Number(adjustment.box1) || 0;
     const box4Adjustment = Number(adjustment.box4) || 0;
@@ -155,7 +163,9 @@ export function calculateVatForQuarter(quarter, {
         vatOwed: vatInAdjusted - vatOutAdjusted,
         isOldestDisplayedQuarter,
         vatExcludedItems,
-        vatExcludedTotal
+        vatExcludedTotal,
+        salesExVat,
+        purchasesExVat
     };
 }
 

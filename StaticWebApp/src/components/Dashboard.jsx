@@ -8,6 +8,7 @@ import { unclaimedExpenses } from '../utils/unclaimedExpenses.mjs';
 import { calculateAvailableAfterTax, calculateBookCashWithPots } from '../utils/potBalances.mjs';
 import { calculateRecordedTradingCash } from '../utils/cashCalculations.mjs';
 import { calculateMainAccountBookBalance, loadMainAccountCashBaseline } from '../utils/cashBaseline.mjs';
+import { calculateCorporationTax } from '../utils/corporationTax';
 import {
     getInvoices,
     getExpenses,
@@ -131,23 +132,6 @@ export default function Dashboard({ onNavigate }) {
             const itemDate = new Date(item[dateField]);
             return itemDate >= startDate && itemDate <= endDate;
         });
-    };
-
-    const calculateCorporationTax = (profit) => {
-        if (profit <= 0) return 0;
-        const lowerLimit = 50000;
-        const upperLimit = 250000;
-        const smallRate = 0.19;
-        const mainRate = 0.25;
-
-        if (profit <= lowerLimit) {
-            return profit * smallRate;
-        } else if (profit >= upperLimit) {
-            return profit * mainRate;
-        } else {
-            const marginalRelief = ((upperLimit - profit) / upperLimit) * (mainRate - smallRate) * profit;
-            return (profit * mainRate) - marginalRelief;
-        }
     };
 
     const getCurrentPeriodKey = () => {

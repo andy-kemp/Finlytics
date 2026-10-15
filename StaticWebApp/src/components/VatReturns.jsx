@@ -285,28 +285,9 @@ export default function VatReturns() {
         const box4 = calc.vatOut;
         const box5 = box3 - box4;
 
-        // Net sales value: sum of invoice net amounts in this quarter
-        const usePaymentDate = settings?.vatAccountingMethod !== 'invoice';
-        const netSales = invoices.reduce((sum, inv) => {
-            if (usePaymentDate) {
-                if (!inv.datePaid || inv.status !== 'Paid') return sum;
-                const d = new Date(inv.datePaid);
-                return (d >= start && d <= end) ? sum + (inv.amountNet || 0) : sum;
-            }
-            if (!inv.dateIssued) return sum;
-            const d = new Date(inv.dateIssued);
-            return (d >= start && d <= end) ? sum + (inv.amountNet || 0) : sum;
-        }, 0);
-
-        // Net purchases value: sum of expense + DLA net amounts in this quarter
-        const netPurchases = [
-            ...expenses.map(e => ({ date: e.entryDate, net: e.amountNet || 0 })),
-            ...dlaEntries.filter(e => e.direction === 'OwedToDirector').map(e => ({ date: e.entryDate, net: e.amountNet || 0 }))
-        ].reduce((sum, e) => {
-            if (!e.date) return sum;
-            const d = new Date(e.date);
-            return (d >= start && d <= end) ? sum + e.net : sum;
-        }, 0);
+        // Net sales / purchases use the same item selection as Boxes 1 and 4
+        const netSales = calc.salesExVat;
+        const netPurchases = calc.purchasesExVat;
 
         // Boxes 6-9: HMRC requires whole pounds only (no pence) — round to nearest £
         const box6 = Math.round(netSales);
@@ -686,45 +667,9 @@ export default function VatReturns() {
             const vatReclaimedCurrPeriod = Math.round(hmrcCalc.vatOut * 100) / 100;
             const netVatDue              = Math.round(Math.abs(totalVatDue - vatReclaimedCurrPeriod) * 100) / 100;
 
-            const qStart = new Date(hmrcQuarter.quarterStartDate);
-            const qEnd   = new Date(hmrcQuarter.quarterEndDate);
-
-            // Match calcForQuarter: oldest displayed quarter absorbs pre-inception/stub-period data
-            const hmrcInceptionDate = settings?.incorporationDate
-                ? new Date(settings.incorporationDate)
-                : settings?.companyInceptionDate
-                    ? new Date(settings.companyInceptionDate)
-                    : null;
-            const hmrcPrevQStart = new Date(qStart.getFullYear(), qStart.getMonth() - 3, 1);
-            const hmrcPrevWouldShow = hmrcInceptionDate ? hmrcPrevQStart >= hmrcInceptionDate : true;
-            const isOldestDisplayed = !hmrcPrevWouldShow;
-            const hmrcUsePayment = settings?.vatAccountingMethod !== 'invoice';
-
-            const totalValueSalesExVAT = Math.round(
-                invoices.filter(inv => {
-                    if (hmrcUsePayment) {
-                        if (!inv.datePaid || inv.status !== 'Paid') return false;
-                        const d = new Date(inv.datePaid);
-                        return d >= qStart && d <= qEnd;
-                    }
-                    if (!inv.dateIssued) return false;
-                    const d = new Date(inv.dateIssued);
-                    if (d >= qStart && d <= qEnd) return true;
-                    if (isOldestDisplayed) {
-                        if (hmrcInceptionDate && d < hmrcInceptionDate) return true;
-                        if (hmrcInceptionDate && d >= hmrcInceptionDate && d < qStart) return true;
-                        if (!hmrcInceptionDate && d < qStart) return true;
-                    }
-                    return false;
-                }).reduce((s, inv) => s + (inv.amount || 0), 0)
-            );
-            const totalValuePurchasesExVAT = Math.round(
-                expenses.filter(e => {
-                    if (!e.entryDate) return false;
-                    const d = new Date(e.entryDate);
-                    return (d >= qStart && d <= qEnd) || (isOldest && d < qStart);
-                }).reduce((s, e) => s + (e.amount || 0), 0)
-            );
+            // Boxes 6 and 7 come from the same calculation as Boxes 1 and 4 (whole pounds per HMRC)
+            const totalValueSalesExVAT     = Math.round(hmrcCalc.salesExVat || 0);
+            const totalValuePurchasesExVAT = Math.round(hmrcCalc.purchasesExVat || 0);
 
             const submission = {
                 periodKey:                    hmrcPeriodKey.trim(),

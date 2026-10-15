@@ -64,3 +64,18 @@ Desktop.ini
 # =========================
 temp-migration.sql
 cert-output/
+
+# =========================
+# Private / environment-specific (never commit)
+# =========================
+publish-*/
+publish_*/
+prodfunc-logs/
+deployment-config*.json
+financehub-deployment-config.json
+*.zonefile.txt
+_*.csv
+EmailReceipt_*.pdf
+*.bak
+Archive-SharePoint/*.ini
+test-dla.json

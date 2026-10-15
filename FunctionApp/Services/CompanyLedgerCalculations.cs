@@ -37,7 +37,6 @@ namespace FinanceHubFunctions.Services
             }
 
             // Between limits: apply marginal relief
-            // Marginal relief = (Upper Limit - Profits) × (Main Rate - Small Rate) / (Upper Limit - Lower Limit)
             var marginalRelief = CalcMarginalRelief(pbt, config);
             var taxAtMainRate = pbt * config.MainRate;
             return taxAtMainRate - marginalRelief;
@@ -45,17 +44,18 @@ namespace FinanceHubFunctions.Services
 
         /// <summary>
         /// Calculates UK marginal relief for profits between lower and upper limits.
-        /// This is a pluggable function that can be swapped for different tax regimes.
+        /// Relief = F × (Upper Limit − Profits), where the standard fraction F makes the tax
+        /// continuous at the lower limit (3/200 for 19%/25% with £50k/£250k limits).
+        /// Assumes no exempt distributions (augmented profits = taxable profits).
         /// </summary>
         public static decimal CalcMarginalRelief(decimal pbt, TaxConfig config)
         {
             if (pbt <= config.LimitLower || pbt >= config.LimitUpper) return 0;
 
-            var range = config.LimitUpper - config.LimitLower;
-            var rateDiff = config.MainRate - config.SmallProfitsRate;
-            var distanceFromUpper = config.LimitUpper - pbt;
+            var standardFraction = config.LimitLower * (config.MainRate - config.SmallProfitsRate)
+                / (config.LimitUpper - config.LimitLower);
 
-            return (distanceFromUpper * rateDiff * pbt) / config.LimitUpper;
+            return standardFraction * (config.LimitUpper - pbt);
         }
 
         /// <summary>

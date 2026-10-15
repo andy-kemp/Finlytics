@@ -144,7 +144,7 @@ BaseCurrency=GBP
 1. **Initialize Database Schema:**
    ```bash
    cd FunctionApp
-   dotnet ef database update --connection "Server=financehub-sql-prod-6408.database.windows.net;Database=financehub;User Id=sqladmin;Password=4kRCAYDreB8Eb95sAa1!;Encrypt=True;"
+   dotnet ef database update --connection "Server=financehub-sql-prod-6408.database.windows.net;Database=financehub;Authentication=Active Directory Default;Encrypt=True;"
    ```
 
 2. **Configure Managed Identity SQL Access:**

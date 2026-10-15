@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using System.Net;
 using FinanceHubFunctions.Models;
+using FinanceHubFunctions.Services;
 
 namespace FinanceHubFunctions.Helpers
 {
@@ -33,8 +34,7 @@ namespace FinanceHubFunctions.Helpers
                 && entry.EffectiveDate < new DateTime(taxYear + 1, 4, 6)).ToList();
             if (sources.IncludePayroll) costs += yearLedger.Where(entry => entry.EntryType is "Salary" or "EmployerNI").Sum(entry => entry.Amount);
             var profit = income - costs;
-            var estimate = profit <= 0 ? 0 : profit <= 50000 ? profit * 0.19m : profit >= 250000 ? profit * 0.25m
-                : profit * 0.25m - ((250000 - profit) / 250000) * 0.06m * profit;
+            var estimate = CompanyLedgerCalculations.CalcCorporationTaxEstimate(profit, new TaxConfig());
             return Pennies(Math.Max(0, estimate - yearLedger.Where(entry => entry.EntryType == "CorpTax_Paid").Sum(entry => entry.Amount)));
         }
 

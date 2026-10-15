@@ -36,6 +36,34 @@ test('next-return correction remains a Box 4 adjustment and never a second cash 
     assert.equal(JSON.stringify(record), before);
 });
 
+test('Box 6 sums net sales from the same invoices as Box 1 (cash basis)', () => {
+    const invoices = [
+        { status: 'Paid', datePaid: '2026-07-10', amountNet: 1000, vatAmount: 200 },
+        { status: 'Paid', datePaid: '2026-05-31', amountNet: 500, vatAmount: 100 },
+        { status: 'Sent', dateIssued: '2026-07-10', amountNet: 700, vatAmount: 140 }
+    ];
+    const result = calculateVatForQuarter(quarter, { invoices, expenses: [], dlaEntries: [], settings: {}, displayQuarters: [quarter] });
+    assert.equal(result.vatIn, 200);
+    assert.equal(result.salesExVat, 1000);
+});
+
+test('Box 7 includes all purchases in the period, even where VAT is not reclaimable', () => {
+    const expenses = [
+        { entryDate: '2026-07-01', amountNet: 100, vatAmount: 20 },
+        { entryDate: '2026-07-02', amountNet: 50, vatAmount: 10, category: 'Client Entertainment' },
+        { entryDate: '2026-05-01', amountNet: 999, vatAmount: 0 },
+        { amountNet: 999 }
+    ];
+    const dlaEntries = [
+        { direction: 'OwedToDirector', entryDate: '2026-08-01', amountNet: 30, vatAmount: 6 },
+        { direction: 'OwedToCompany', entryDate: '2026-08-01', amountNet: 400, vatAmount: 0 }
+    ];
+    const previous = { quarterStartDate: '2026-03-01T00:00:00Z', quarterEndDate: '2026-05-31T23:59:59Z' };
+    const result = calculateVatForQuarter(quarter, { invoices: [], expenses, dlaEntries, settings: {}, displayQuarters: [quarter, previous] });
+    assert.equal(result.vatOut, 26);
+    assert.equal(result.purchasesExVat, 180);
+});
+
 test('eligible UK director-funded claims retain VAT relief while foreign claims do not', () => {
     const dlaEntries = [
         { direction: 'OwedToDirector', originalCurrency: 'GBP', entryDate: '2026-07-01', vatAmount: 20, amountGross: 120 },
