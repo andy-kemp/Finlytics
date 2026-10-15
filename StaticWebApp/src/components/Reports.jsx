@@ -12,6 +12,7 @@ import {
 } from '../services/apiService';
 import { useToast } from '../hooks/useToast';
 import { ctPaymentDeadline, ct600FilingDeadline } from '../utils/corporationTax';
+import { calculateS455, s455RateFor } from '../utils/s455';
 
 const ProfitAndLoss = lazy(() => import('./ProfitAndLoss'));
 const BalanceSheet  = lazy(() => import('./BalanceSheet'));
@@ -378,20 +379,22 @@ function CTReport() {
         const aiaCapped      = totalAssetCost > 1_000_000;
 
         // --- Profit ---
-        // Deduct: regular allowable + DLA allowable + DLA capital items + payroll + AIA
-        // Add back: regular disallowable + DLA disallowable
+        // Deduct: regular allowable + DLA allowable + DLA capital items + payroll + AIA + non-CT costs
+        // Add back: regular disallowable + DLA disallowable (so they net to nil for tax)
         const adjustedProfit = turnover
             - totalAllowable
             - totalDlaAllowable
             - totalDlaCapital
             - totalPayroll
-            - aiaAllowance;
+            - aiaAllowance
+            - totalDisallowable
+            - totalDlaDisallowable;
         const taxableProfit  = adjustedProfit + totalDisallowable + totalDlaDisallowable;
 
         // --- CT ---
         const { tax: ctLiability, rate: effectiveRate, rateLabel } = computeCT(Math.max(0, taxableProfit));
 
-        // --- S.455 (33.75% on loans owed to company, outstanding as at FY end) ---
+        // --- S.455 on each director's net overdrawn balance as at FY end (33.75% / 35.75% from 6 Apr 2026) ---
         // Filter to OwedToCompany entries that existed on or before FY end and still have a balance.
         const s455DueDate = ctPaymentDeadline(end);
 
@@ -400,8 +403,7 @@ function CTReport() {
             new Date(d.entryDate) <= end &&
             (d.remainingBalance ?? 0) > 0
         );
-        const totalS455Base = s455Entries.reduce((sum, d) => sum + (d.remainingBalance ?? 0), 0);
-        const s455Charge    = totalS455Base * 0.3375;
+        const { base: totalS455Base, charge: s455Charge } = calculateS455(dlaEntries, end);
 
         // --- Dividends declared/paid in this FY ---
         // Note: dividends are NOT CT-deductible — they come from post-tax distributable reserves.
@@ -604,7 +606,7 @@ function CTReport() {
             },
             s455Analysis: {
                 totalOutstandingLoans: computation.totalS455Base,
-                s455Rate:              0.3375,
+                s455Rate:              '33.75% (loans before 6 Apr 2026) / 35.75%; net of amounts owed to director',
                 s455Charge:           computation.s455Charge,
                 dueDate:              computation.s455DueDate?.toISOString().split('T')[0],
                 entries: computation.s455Entries.map(d => ({
@@ -612,7 +614,7 @@ function CTReport() {
                     description:      d.description,
                     entryDate:        d.entryDate,
                     remainingBalance: d.remainingBalance,
-                    s455On:           (d.remainingBalance ?? 0) * 0.3375,
+                    s455On:           (d.remainingBalance ?? 0) * s455RateFor(d.entryDate),
                 })),
             },
             quarterlyBreakdown: computation.quarters.map(q => ({
@@ -877,11 +879,11 @@ ${computation.fyAssets.map(a => `<tr><td>${a.assetId || '—'}</td><td>${a.name 
 
 ${computation.s455Entries.length > 0 ? `
 <h2>S.455 Analysis — Director's Loan (Owed to Company)</h2>
-<p style="font-size:9pt;color:#6b7280;margin-bottom:8px">33.75% charge on outstanding director's loan balances as at ${computation.fyEnd.toLocaleDateString('en-GB')}. Repayable if loan is repaid within 9 months of period end.</p>
+<p style="font-size:9pt;color:#6b7280;margin-bottom:8px">S.455 charge (33.75%, or 35.75% on loans made from 6 April 2026) on each director's net overdrawn balance as at ${computation.fyEnd.toLocaleDateString('en-GB')}. Repayable if loan is repaid within 9 months of period end.</p>
 <table>
-<thead><tr><th>DLA reference</th><th>Description</th><th>Entry date</th><th class="num">Outstanding</th><th class="num">S.455 @ 33.75%</th></tr></thead>
+<thead><tr><th>DLA reference</th><th>Description</th><th>Entry date</th><th class="num">Outstanding</th><th class="num">S.455 (gross, by loan date)</th></tr></thead>
 <tbody>
-${computation.s455Entries.map(d => `<tr><td>${d.dlaId}</td><td>${d.description || '—'}</td><td>${d2(d.entryDate)}</td><td class="num">${f(d.remainingBalance)}</td><td class="num">${f((d.remainingBalance ?? 0) * 0.3375)}</td></tr>`).join('')}
+${computation.s455Entries.map(d => `<tr><td>${d.dlaId}</td><td>${d.description || '—'}</td><td>${d2(d.entryDate)}</td><td class="num">${f(d.remainingBalance)}</td><td class="num">${f((d.remainingBalance ?? 0) * s455RateFor(d.entryDate))}</td></tr>`).join('')}
 <tr class="total-row"><td colspan="3">Total S.455 charge (Box 480)</td><td class="num">${f(computation.totalS455Base)}</td><td class="num">${f(computation.s455Charge)}</td></tr>
 </tbody></table>
 <p style="font-size:9pt;color:#6b7280">S.455 due by: <strong>${computation.s455DueDate?.toLocaleDateString('en-GB')}</strong></p>` : ''}
@@ -1117,6 +1119,9 @@ ${computation.quarters.map(q => `
                             )}
                             <WaterfallRow label="Less: Payroll costs (gross wages + employer NI)" value={-computation.totalPayroll} fmt={fmt} indent />
                             <WaterfallRow label="Less: Capital allowances (AIA)" value={-computation.aiaAllowance} fmt={fmt} indent />
+                            {(computation.totalDisallowable + computation.totalDlaDisallowable) > 0 && (
+                                <WaterfallRow label="Less: Disallowable expenses (incl. DLA)" value={-(computation.totalDisallowable + computation.totalDlaDisallowable)} fmt={fmt} indent />
+                            )}
                             <div style={{ borderTop: '1px solid #e5e7eb', margin: '0.5rem 0' }} />
                             <WaterfallRow label="Adjusted trading profit" value={computation.adjustedProfit} fmt={fmt} bold />
                             {(computation.totalDisallowable + computation.totalDlaDisallowable) > 0 && (
@@ -1368,7 +1373,7 @@ ${computation.quarters.map(q => `
                             warning
                         >
                             <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0 0 0.75rem', lineHeight: 1.6 }}>
-                                S.455 tax at <strong>33.75%</strong> applies to loans owed to the company that remain outstanding
+                                S.455 tax at <strong>33.75%</strong> (<strong>35.75%</strong> on loans made from 6 April 2026) applies to each director's net overdrawn balance that remains outstanding
                                 9 months and 1 day after the accounting period ends (<strong>{computation.s455DueDate.toLocaleDateString('en-GB')}</strong>).
                                 This charge is <em>repayable</em> to the company once the director repays the loan.
                             </p>
@@ -1377,7 +1382,7 @@ ${computation.quarters.map(q => `
                                     <tr style={{ background: '#fff7ed' }}>
                                         <th style={thStyle}>DLA Reference</th>
                                         <th style={{ ...thStyle, textAlign: 'right' }}>Outstanding Balance</th>
-                                        <th style={{ ...thStyle, textAlign: 'right' }}>S.455 @ 33.75%</th>
+                                        <th style={{ ...thStyle, textAlign: 'right' }}>S.455 (gross, by loan date)</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -1386,7 +1391,7 @@ ${computation.quarters.map(q => `
                                             <td style={tdStyle}>{d.dlaId}</td>
                                             <td style={{ ...tdStyle, textAlign: 'right' }}>{fmt(d.remainingBalance)}</td>
                                             <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600, color: '#c2410c' }}>
-                                                {fmt((d.remainingBalance ?? 0) * 0.3375)}
+                                                {fmt((d.remainingBalance ?? 0) * s455RateFor(d.entryDate))}
                                             </td>
                                         </tr>
                                     ))}

@@ -12,6 +12,7 @@ import {
 } from '../services/apiService';
 import { useToast } from '../hooks/useToast';
 import { ctPaymentDeadline, ct600FilingDeadline, companiesHouseDeadline } from '../utils/corporationTax';
+import { calculateS455 } from '../utils/s455';
 
 // ── Helpers ──
 
@@ -227,15 +228,14 @@ export default function YearEndPack() {
         const fyAssets = assets.filter(a => { const d = new Date(a.purchaseDate); return d >= fyStart && d <= fyEnd; });
         const aiaTotal = Math.min(fyAssets.reduce((s, a) => s + (a.purchasePrice ?? 0), 0), 1000000);
 
-        const totalDeductions = allowableExpenses + totalDla + totalPayroll + aiaTotal;
+        // Accounting profit deducts every cost; non-CT items (expenses and DLA) are then added back for tax
+        const dlaDisallowable = fyDlaExpenses.filter(d => d.ctTag === 'NonCT').reduce((s, d) => s + (d.amountNet ?? 0), 0);
+        const totalDeductions = allowableExpenses + disallowableExpenses + totalDla + totalPayroll + aiaTotal;
         const adjustedProfit = turnover - totalDeductions;
-        const taxableProfit = Math.max(0, adjustedProfit + disallowableExpenses);
+        const taxableProfit = Math.max(0, adjustedProfit + disallowableExpenses + dlaDisallowable);
         const { ct: ctLiability } = computeCT(taxableProfit);
 
-        const s455Base = dlaEntries
-            .filter(d => d.direction === 'OwedToCompany' && (d.remainingBalance ?? 0) > 0)
-            .reduce((s, d) => s + (d.remainingBalance ?? 0), 0);
-        const s455Charge = s455Base * 0.3375;
+        const { base: s455Base, charge: s455Charge } = calculateS455(dlaEntries, fyEnd);
 
         const fyDivs = dividends.filter(d => {
             const dt = new Date(d.paymentDate || d.meetingDate);

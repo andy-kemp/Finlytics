@@ -12,6 +12,7 @@ import {
 } from '../services/apiService';
 import { useToast } from '../hooks/useToast';
 import { ctPaymentDeadline, ct600FilingDeadline } from '../utils/corporationTax';
+import { calculateS455 } from '../utils/s455';
 
 // ── Helpers (shared logic with CTReport) ──
 
@@ -220,12 +221,9 @@ export default function CT600Form() {
         const { ct: ctLiability, rate: effectiveRate, label: rateLabel } = computeCT(taxableProfit);
 
         // S.455
-        const s455Entries = dlaEntries.filter(d => {
-            if (d.direction !== 'OwedToCompany') return false;
-            return (d.remainingBalance ?? 0) > 0;
-        });
-        const totalS455Base = s455Entries.reduce((s, d) => s + (d.remainingBalance ?? 0), 0);
-        const s455Charge = totalS455Base * 0.3375;
+        const s455Entries = dlaEntries.filter(d =>
+            d.direction === 'OwedToCompany' && new Date(d.entryDate) <= fyEnd && (d.remainingBalance ?? 0) > 0);
+        const { base: totalS455Base, charge: s455Charge } = calculateS455(dlaEntries, fyEnd);
 
         // Deadlines
         const ctPayDeadline = ctPaymentDeadline(fyEnd);
@@ -398,7 +396,7 @@ not captured in Finlytics (e.g. capital gains, group relief, carried-forward los
                 title: 'Section 455 Tax',
                 icon: '⚠️',
                 rows: [
-                    { box: '480', label: 'S.455 tax on loans to participators', value: f(c.s455Charge), bold: true, highlight: c.s455Charge > 0, note: `33.75% on £${(c.totalS455Base ?? 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })} outstanding` },
+                    { box: '480', label: 'S.455 tax on loans to participators', value: f(c.s455Charge), bold: true, highlight: c.s455Charge > 0, note: `33.75%/35.75% by loan date on £${(c.totalS455Base ?? 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })} net overdrawn` },
                     { box: '—', label: 'S.455 repayment due date', value: c.ctPayDeadline.toLocaleDateString('en-GB'), note: 'Repayable when loan repaid' },
                 ],
             },
@@ -592,7 +590,7 @@ not captured in Finlytics (e.g. capital gains, group relief, carried-forward los
                                 title: 'Section 455 Tax (Director\'s Loans)',
                                 icon: '⚠️',
                                 rows: [
-                                    { box: '480', label: 'S.455 tax on loans to participators', value: c.s455Charge, bold: true, highlight: c.s455Charge > 0, note: `33.75% on ${fmt(c.totalS455Base)} outstanding DLA (OwedToCompany)` },
+                                    { box: '480', label: 'S.455 tax on loans to participators', value: c.s455Charge, bold: true, highlight: c.s455Charge > 0, note: `33.75%/35.75% by loan date on ${fmt(c.totalS455Base)} net overdrawn DLA` },
                                 ],
                             },
                             {

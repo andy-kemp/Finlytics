@@ -1,7 +1,8 @@
+import { peakOverdrawnByTaxYear, bikRiskFor } from '../utils/directorLoanBik';
+import { s455RateFor } from '../utils/s455';
+
 const DEFAULT_FY_START_MONTH = 4;
 const DEFAULT_FY_START_DAY = 6;
-const DEFAULT_S455_RATE = 0.3375;
-const DEFAULT_BIK_THRESHOLD = 10000;
 
 const toDate = (value) => {
     if (!value) return null;
@@ -46,15 +47,6 @@ const getS455DueDate = (yearEnd) => {
     return addDays(addMonths(yearEnd, 9), 1);
 };
 
-const getTaxYearEnd = (date) => {
-    if (!date) return null;
-    const year = date.getFullYear();
-    const taxYearEndThisYear = new Date(year, 3, 5);
-    if (date > taxYearEndThisYear) {
-        return new Date(year + 1, 3, 5);
-    }
-    return taxYearEndThisYear;
-};
 
 const getOutstandingAtDueDate = (entry, dueDate) => {
     const datePaid = toDate(entry.datePaid);
@@ -72,15 +64,6 @@ const getOutstandingAtDueDate = (entry, dueDate) => {
     return Number(entry.amountGross) || 0;
 };
 
-const getBikRisk = (entry, taxYearEnd, threshold) => {
-    const amount = Number(entry.amountGross) || 0;
-    if (amount <= threshold) return false;
-
-    const datePaid = toDate(entry.datePaid);
-    if (!taxYearEnd) return true;
-    if (!datePaid) return true;
-    return datePaid > taxYearEnd;
-};
 
 export const calculateDlaCompliance = (entries, companySettings, asOfDate = new Date()) => {
     const entryList = Array.isArray(entries) ? entries : [];
@@ -97,6 +80,7 @@ export const calculateDlaCompliance = (entries, companySettings, asOfDate = new 
     let s455DueTotal = 0;
     let s455PendingTotal = 0;
     let bikRiskCount = 0;
+    const bikPeaks = peakOverdrawnByTaxYear(entryList);
 
     entryList.forEach(entry => {
         const entryDate = toDate(entry.entryDate);
@@ -109,11 +93,11 @@ export const calculateDlaCompliance = (entries, companySettings, asOfDate = new 
         const isS455DueNow = s455DueDate && asOf >= s455DueDate && outstandingAtDueDate > 0;
         const isS455Pending = s455DueDate && asOf < s455DueDate && outstandingAtDueDate > 0;
 
-        const s455DueAmount = isS455DueNow ? outstandingAtDueDate * DEFAULT_S455_RATE : 0;
-        const s455PendingAmount = isS455Pending ? outstandingAtDueDate * DEFAULT_S455_RATE : 0;
+        const s455Rate = s455RateFor(entryDate);
+        const s455DueAmount = isS455DueNow ? outstandingAtDueDate * s455Rate : 0;
+        const s455PendingAmount = isS455Pending ? outstandingAtDueDate * s455Rate : 0;
 
-        const taxYearEnd = getTaxYearEnd(entryDate);
-        const bikRisk = isOwedToCompany ? getBikRisk(entry, taxYearEnd, DEFAULT_BIK_THRESHOLD) : false;
+        const bikRisk = isOwedToCompany && bikRiskFor(entry, bikPeaks);
 
         const remainingBalance = entry.remainingBalance !== undefined && entry.remainingBalance !== null
             ? Number(entry.remainingBalance) || 0
