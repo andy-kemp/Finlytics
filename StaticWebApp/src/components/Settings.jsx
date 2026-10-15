@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { getCompanySettings, updateCompanySettings, testSmtpConfiguration, adminLogin, adminMfaSetup, adminMfaVerify, adminChangePassword, getFinanceHubSettings, updateFinanceHubSettings, getPayrollSettings, updatePayrollSettings, inviteAccountant, getLinkedAccountants, revokeAccountant } from '../services/apiService';
+import { FEATURES } from '../utils/features';
 import Toast from './Toast';
 import './Settings.css';
 
@@ -585,12 +586,14 @@ const Settings = () => {
                 >
                     ✍️ Signatures
                 </button>
-                <button 
-                    className={`tab ${activeTab === 'payroll' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('payroll')}
-                >
-                    💷 Payroll
-                </button>
+                {FEATURES.payroll && (
+                    <button
+                        className={`tab ${activeTab === 'payroll' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('payroll')}
+                    >
+                        💷 Payroll
+                    </button>
+                )}
                 <button 
                     className={`tab ${activeTab === 'security' ? 'active' : ''}`}
                     onClick={() => setActiveTab('security')}

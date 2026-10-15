@@ -6,6 +6,8 @@ import Dashboard from './components/Dashboard';
 import MobileHome from './components/MobileHome';
 import FinlyticsLogo from './components/FinlyticsLogo';
 import ExportModal from './components/ExportModal';
+import ComingSoon from './components/ComingSoon';
+import { FEATURES } from './utils/features';
 import './styles/App.css';
 
 // Lazy-load all tabs — only parsed/downloaded when first visited
@@ -297,7 +299,7 @@ function MainContent() {
                         📋 VAT Returns
                     </li>
 
-                    <li className="nav-group-label">People &amp; Payroll</li>
+                    <li className="nav-group-label">{FEATURES.payroll ? <>People &amp; Payroll</> : 'People'}</li>
                     <li onClick={() => handleNavigate('shareholders')} className={view === 'shareholders' ? 'active' : ''}>
                         📈 Shareholders
                     </li>
@@ -305,7 +307,7 @@ function MainContent() {
                         👔 Employees
                     </li>
                     <li onClick={() => handleNavigate('payroll')} className={view === 'payroll' ? 'active' : ''}>
-                        💷 Payroll
+                        💷 Payroll{!FEATURES.payroll && <span className="nav-soon-badge">Soon</span>}
                     </li>
                     <li onClick={() => handleNavigate('p11d')} className={view === 'p11d' ? 'active' : ''}>
                         🏥 P11D / BIK
@@ -444,7 +446,11 @@ function MainContent() {
                 {view === 'shareholders' && <Shareholders />}
                 {view === 'employees' && <Employees />}
                 {view === 'team' && <TeamManagement />}
-                {view === 'payroll' && <Payroll />}
+                {view === 'payroll' && (FEATURES.payroll ? <Payroll /> : (
+                    <ComingSoon title="💷 Payroll">
+                        Payroll (PAYE, RTI submissions and payslips) is parked for now. Director's benefits and P11D are still available under People.
+                    </ComingSoon>
+                ))}
                 {view === 'p11d' && <P11D />}
                 {view === 'dividends' && <Dividends />}
                 {view === 'assets' && <Assets />}

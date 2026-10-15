@@ -39,6 +39,13 @@ namespace FinanceHubFunctions.Functions
         {
             _logger.LogInformation("PayrollAutoScheduler triggered at {Time} UTC", DateTime.UtcNow);
 
+            // Payroll is parked until the company runs payroll; set PayrollEnabled=true to turn it back on
+            if (!string.Equals(Environment.GetEnvironmentVariable("PayrollEnabled"), "true", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogDebug("PayrollAutoScheduler: payroll feature parked (PayrollEnabled is not true) — skipping");
+                return;
+            }
+
             if (_db == null)
             {
                 _logger.LogError("PayrollAutoScheduler: database context not available — skipping");
