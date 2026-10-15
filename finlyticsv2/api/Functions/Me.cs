@@ -28,7 +28,14 @@ public sealed class Me
             return unauthorized;
         }
 
-        var claims = AuthHelper.ExtractJwtClaims(token);
+        var claims = await AuthHelper.ValidateTokenAsync(token, request.FunctionContext.CancellationToken);
+        if (claims is null)
+        {
+            var invalid = request.CreateResponse(HttpStatusCode.Unauthorized);
+            await invalid.WriteStringAsync(JsonSerializer.Serialize(new { error = "Invalid or unverifiable access token" }));
+            return invalid;
+        }
+
         var immutableUserId = AuthHelper.ResolveImmutableUserId(claims);
         var preferredLogin = AuthHelper.ResolvePreferredLogin(claims);
 

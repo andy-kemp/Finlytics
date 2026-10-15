@@ -1,11 +1,26 @@
-using System.Text;
-using System.Text.Json;
+using System.IdentityModel.Tokens.Jwt;
 using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.IdentityModel.Protocols;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
+using Microsoft.IdentityModel.Tokens;
+using HttpRequestData = Microsoft.Azure.Functions.Worker.Http.HttpRequestData;
 
 namespace FinlyticsV2.Api.Helpers;
 
 public static class AuthHelper
 {
+    // Entra tenant and API audience (app ID URI or client ID) whose tokens this API accepts.
+    private static readonly string? TenantId = Environment.GetEnvironmentVariable("AuthTenantId");
+    private static readonly string? Audience = Environment.GetEnvironmentVariable("AuthAudience");
+    private static readonly string? Issuer = string.IsNullOrWhiteSpace(TenantId) ? null : $"https://login.microsoftonline.com/{TenantId}/v2.0";
+    private static readonly Lazy<ConfigurationManager<OpenIdConnectConfiguration>?> Metadata = new(() => Issuer == null ? null
+        : new ConfigurationManager<OpenIdConnectConfiguration>($"{Issuer}/.well-known/openid-configuration",
+            new OpenIdConnectConfigurationRetriever(), new HttpDocumentRetriever { RequireHttps = true }));
+
+    private static readonly string[] ClaimNames = { "oid", "sub", "tid", "preferred_username", "email", "name", "upn", "unique_name" };
+
+    public static bool IsConfigured => !string.IsNullOrWhiteSpace(TenantId) && !string.IsNullOrWhiteSpace(Audience);
+
     public static string? GetAccessToken(HttpRequestData req)
     {
         if (!req.Headers.TryGetValues("Authorization", out var values))
@@ -22,50 +37,58 @@ public static class AuthHelper
         return authHeader["Bearer ".Length..].Trim();
     }
 
-    public static Dictionary<string, string?> ExtractJwtClaims(string jwt)
+    /// <summary>
+    /// Validates signature, issuer, audience and lifetime of an Entra v2 access token.
+    /// Returns its claims, or null if the token is invalid or auth is not configured (fail closed).
+    /// </summary>
+    public static async Task<Dictionary<string, string?>?> ValidateTokenAsync(string jwt, CancellationToken cancellationToken)
     {
-        var claims = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        var metadataManager = Metadata.Value;
+        if (!IsConfigured || metadataManager == null)
         {
-            ["oid"] = null,
-            ["sub"] = null,
-            ["tid"] = null,
-            ["preferred_username"] = null,
-            ["email"] = null,
-            ["name"] = null,
-            ["upn"] = null,
-            ["unique_name"] = null,
-        };
-
-        var parts = jwt.Split('.');
-        if (parts.Length < 2)
-        {
-            return claims;
+            return null;
         }
 
-        var payload = parts[1].Replace('-', '+').Replace('_', '/');
-        while (payload.Length % 4 != 0)
+        var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
+        if (!handler.CanReadToken(jwt))
         {
-            payload += "=";
+            return null;
         }
 
         try
         {
-            var bytes = Convert.FromBase64String(payload);
-            using var doc = JsonDocument.Parse(Encoding.UTF8.GetString(bytes));
-            foreach (var key in claims.Keys.ToArray())
+            var metadata = await metadataManager.GetConfigurationAsync(cancellationToken);
+            var principal = handler.ValidateToken(jwt, new TokenValidationParameters
             {
-                if (doc.RootElement.TryGetProperty(key, out var value))
-                {
-                    claims[key] = value.GetString();
-                }
-            }
-        }
-        catch
-        {
-            // Keep null claims when token cannot be parsed.
-        }
+                RequireSignedTokens = true,
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKeys = metadata.SigningKeys,
+                ValidAlgorithms = new[] { SecurityAlgorithms.RsaSha256 },
+                ValidateIssuer = true,
+                ValidIssuer = Issuer,
+                ValidateAudience = true,
+                ValidAudience = Audience,
+                ValidateLifetime = true,
+                RequireExpirationTime = true,
+                ClockSkew = TimeSpan.FromMinutes(1)
+            }, out _);
 
-        return claims;
+            if (principal.FindFirst("tid")?.Value != TenantId)
+            {
+                return null;
+            }
+
+            return ClaimNames.ToDictionary(name => name, name => principal.FindFirst(name)?.Value, StringComparer.OrdinalIgnoreCase);
+        }
+        catch (SecurityTokenSignatureKeyNotFoundException)
+        {
+            metadataManager.RequestRefresh();
+            return null;
+        }
+        catch (Exception ex) when (ex is SecurityTokenException or ArgumentException or InvalidOperationException or IOException)
+        {
+            return null;
+        }
     }
 
     public static string? ResolveImmutableUserId(Dictionary<string, string?> claims)
@@ -92,4 +115,11 @@ public static class AuthHelper
             ?? claims.GetValueOrDefault("email")
             ?? claims.GetValueOrDefault("unique_name");
     }
+
+    /// <summary>Object IDs allowed to create user-to-company mappings (comma-separated MappingAdminObjectIds setting).</summary>
+    public static bool IsMappingAdmin(string? objectId) =>
+        !string.IsNullOrWhiteSpace(objectId)
+        && (Environment.GetEnvironmentVariable("MappingAdminObjectIds") ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Contains(objectId, StringComparer.OrdinalIgnoreCase);
 }

@@ -4,6 +4,9 @@
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
     "KeyVaultUri": "https://finlytics-dev-kv.vault.azure.net/",
-    "SqlConnectionName": "FinlyticsSql"
+    "SqlConnectionName": "FinlyticsSql",
+    "AuthTenantId": "<entra-tenant-id>",
+    "AuthAudience": "<api-app-id-uri-or-client-id>",
+    "MappingAdminObjectIds": "<comma-separated-admin-object-ids>"
   }
 }

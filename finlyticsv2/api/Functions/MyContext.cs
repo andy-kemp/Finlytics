@@ -31,7 +31,14 @@ public sealed class MyContext
             return unauthorized;
         }
 
-        var claims = AuthHelper.ExtractJwtClaims(token);
+        var claims = await AuthHelper.ValidateTokenAsync(token, request.FunctionContext.CancellationToken);
+        if (claims is null)
+        {
+            var invalid = request.CreateResponse(HttpStatusCode.Unauthorized);
+            await invalid.WriteAsJsonAsync(new { error = "Invalid or unverifiable access token" });
+            return invalid;
+        }
+
         var immutableUserId = AuthHelper.ResolveImmutableUserId(claims);
         var tenantId = claims.GetValueOrDefault("tid");
         var aliases = new[]
@@ -83,13 +90,28 @@ public sealed class MyContext
             return unauthorized;
         }
 
-        var claims = AuthHelper.ExtractJwtClaims(token);
+        var claims = await AuthHelper.ValidateTokenAsync(token, request.FunctionContext.CancellationToken);
+        if (claims is null)
+        {
+            var invalid = request.CreateResponse(HttpStatusCode.Unauthorized);
+            await invalid.WriteAsJsonAsync(new { error = "Invalid or unverifiable access token" });
+            return invalid;
+        }
+
         var immutableUserId = AuthHelper.ResolveImmutableUserId(claims);
         if (string.IsNullOrWhiteSpace(immutableUserId))
         {
             var badClaims = request.CreateResponse(HttpStatusCode.BadRequest);
             await badClaims.WriteAsJsonAsync(new { error = "Token does not contain an immutable user id claim (oid/sub)." });
             return badClaims;
+        }
+
+        // Linking a user to a company grants access to its data, so only configured admins may do it
+        if (!AuthHelper.IsMappingAdmin(claims.GetValueOrDefault("oid")))
+        {
+            var forbidden = request.CreateResponse(HttpStatusCode.Forbidden);
+            await forbidden.WriteAsJsonAsync(new { error = "Only an administrator can link users to companies." });
+            return forbidden;
         }
 
         LinkMyContextRequest? body;
