@@ -262,7 +262,18 @@ export default function Dividends() {
         setFinalising(true);
         setError('');
         try {
-            const result = await finaliseDividend(currentDeclaration.id);
+            let result;
+            try {
+                result = await finaliseDividend(currentDeclaration.id);
+            } catch (e) {
+                if (e.code !== 'InsufficientReserves') throw e;
+                const confirmed = window.confirm(`${e.message}\n\nOnly continue if the company has enough distributable reserves (for example from before you started using Finlytics). Your confirmation will be noted on the declaration.\n\nFinalise anyway?`);
+                if (!confirmed) {
+                    setError(e.message);
+                    return;
+                }
+                result = await finaliseDividend(currentDeclaration.id, { confirmReserves: true });
+            }
             setFinaliseResult(result);
             setCurrentDeclaration(prev => ({ ...prev, status: 'Finalised' }));
             setWizardStep(5);

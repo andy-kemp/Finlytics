@@ -2378,15 +2378,18 @@ export async function deleteDividend(id) {
     }
 }
 
-export async function finaliseDividend(id) {
+export async function finaliseDividend(id, { confirmReserves = false } = {}) {
     const headers = await getAuthHeaders();
-    const response = await fetch(`${API_BASE}/dividends/${id}/finalise`, {
+    const query = confirmReserves ? '?confirmReserves=true' : '';
+    const response = await fetch(`${API_BASE}/dividends/${id}/finalise${query}`, {
         method: 'POST',
         headers
     });
     if (!response.ok) {
         const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || 'Failed to finalise dividend');
+        const error = new Error(err.error || 'Failed to finalise dividend');
+        error.code = err.code;
+        throw error;
     }
     return response.json();
 }

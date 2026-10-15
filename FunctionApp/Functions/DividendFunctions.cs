@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using System.Globalization;
 using FinanceHubFunctions.Models;
 using FinanceHubFunctions.Data;
+using FinanceHubFunctions.Helpers;
 using FinanceHubFunctions.Services;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
@@ -359,6 +360,44 @@ namespace FinanceHubFunctions.Functions
                     var bad = req.CreateResponse(HttpStatusCode.BadRequest);
                     await bad.WriteAsJsonAsync(new { error = "Cannot finalise — no allocations exist." });
                     return bad;
+                }
+
+                // Companies Act 2006 s830: dividends may only be paid from distributable profits.
+                // Records may not include opening reserves, so allow an explicit, noted override.
+                var companySettings = await _db.CompanySettings.AsNoTracking().OrderBy(company => company.Id).FirstOrDefaultAsync();
+                if (companySettings != null)
+                {
+                    var sources = new RecordedCashSources
+                    {
+                        Invoices = await _db.Invoices.AsNoTracking().ToListAsync(),
+                        Expenses = await _db.Expenses.AsNoTracking().ToListAsync(),
+                        DlaEntries = await _db.DlaEntries.AsNoTracking().ToListAsync(),
+                        LedgerEntries = await _db.CompanyLedger.AsNoTracking().ToListAsync(),
+                        PayrollSettings = await _db.PayrollSettings.AsNoTracking().ToListAsync(),
+                        PayrollRuns = await _db.PayrollRuns.AsNoTracking().ToListAsync()
+                    };
+                    var reserves = TaxPotEmailPolicy.DistributableReserves(sources, companySettings, declaration.MeetingDate.Date.AddDays(1).AddTicks(-1));
+                    if (declaration.TotalAmount > reserves)
+                    {
+                        var confirmed = string.Equals(System.Web.HttpUtility.ParseQueryString(req.Url.Query)["confirmReserves"], "true", StringComparison.OrdinalIgnoreCase);
+                        if (!confirmed)
+                        {
+                            var conflict = req.CreateResponse(HttpStatusCode.Conflict);
+                            await conflict.WriteAsJsonAsync(new
+                            {
+                                code = "InsufficientReserves",
+                                error = $"This dividend of £{declaration.TotalAmount:N2} exceeds the distributable reserves of £{reserves:N2} " +
+                                        "calculated from your recorded post-tax profits less dividends already declared. " +
+                                        "Paying it could be unlawful unless the company has reserves not recorded in Finlytics.",
+                                amount = declaration.TotalAmount,
+                                availableReserves = reserves
+                            });
+                            return conflict;
+                        }
+                        declaration.Notes = $"{declaration.Notes}{(string.IsNullOrWhiteSpace(declaration.Notes) ? "" : "\n")}" +
+                            $"Finalised on {DateTime.UtcNow:dd/MM/yyyy} with director confirmation that reserves are sufficient; " +
+                            $"recorded distributable reserves were £{reserves:N2}.";
+                    }
                 }
 
                 var periodKey = declaration.PaymentDate.ToString("yyyy-MM");

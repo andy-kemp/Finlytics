@@ -153,6 +153,15 @@ Check(TaxPotEmailPolicy.AccountingPeriods(shortSettings.CompanyInceptionDate.Val
     == (new DateTime(2026, 7, 1), new DateTime(2027, 1, 1)), "first period ends at the financial year start");
 var shortPeriod = new RecordedCashSources { Invoices = new() { new Invoice { Status = "Paid", DateIssued = new DateTime(2026, 8, 1), AmountNet = 40000 } } };
 Check(TaxPotEmailPolicy.CorporationTax(shortPeriod, shortSettings, ctNow) == 8709.59m, "short period pro-rates the marginal relief limits");
+var reserveSources = new RecordedCashSources
+{
+    Invoices = new() { new Invoice { Status = "Paid", DateIssued = new DateTime(2025, 9, 1), AmountNet = 60000 } },
+    Expenses = new() { new Expense { EntryDate = new DateTime(2025, 10, 1), AmountNet = 1000, CtTag = "NonCT" } },
+    LedgerEntries = new() { new CompanyLedgerEntry { EntryType = "Dividend_Declared", Amount = 20000, EffectiveDate = new DateTime(2026, 5, 1) } }
+};
+// Period 1: profit 59,000; CT on 60,000 (NonCT added back) = 12,150; retained 46,850 less 20,000 declared
+Check(TaxPotEmailPolicy.DistributableReserves(reserveSources, twoYearSettings, ctNow) == 26850m, "distributable reserves are post-tax profits less dividends declared");
+Check(TaxPotEmailPolicy.DistributableReserves(lossYears, twoYearSettings, ctNow) == 8100m, "reserves net earlier losses and tax");
 Check(TaxPotEmailPolicy.UnfiledVat(taxSources, taxSettings, Array.Empty<VatReturn>(), now) == 180m, "daily VAT uses saved paid invoices and reclaimable costs");
 Check(TaxPotEmailPolicy.UnfiledVat(taxSources, taxSettings, new[] { new VatReturn { QuarterStartDate = new DateTime(2026, 10, 1) } }, now) == 0,
     "filed VAT quarter excluded from daily estimate");
