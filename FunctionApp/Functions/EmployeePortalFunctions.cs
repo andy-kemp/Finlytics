@@ -159,14 +159,34 @@ namespace FinanceHubFunctions.Functions
                     return badReq;
                 }
 
-                if (!ForeignCurrencyHelper.TryRead<Expense>(body, out var expense, out var parseError))
+                if (!ForeignCurrencyHelper.TryRead<Expense>(body, out var submitted, out var parseError))
                 {
                     var badReq = req.CreateResponse(HttpStatusCode.BadRequest);
                     await badReq.WriteAsJsonAsync(new { error = parseError }, HttpStatusCode.BadRequest);
                     return badReq;
                 }
 
-                var currencyError = ForeignCurrencyHelper.Validate(expense!, isNew: true);
+                // Copy only the fields an employee may set; approval, DLA, payment, settlement
+                // and attachment fields are owned by the company side
+                var expense = new Expense
+                {
+                    Supplier = submitted!.Supplier,
+                    Category = submitted.Category,
+                    AmountNet = submitted.AmountNet,
+                    VATAmount = submitted.VATAmount,
+                    AmountGross = submitted.AmountGross,
+                    VATApplicability = submitted.VATApplicability,
+                    VATRate = submitted.VATRate,
+                    VATIncluded = submitted.VATIncluded,
+                    EntryDate = submitted.EntryDate,
+                    Reference = submitted.Reference,
+                    Notes = submitted.Notes,
+                    PaymentMethod = submitted.PaymentMethod
+                };
+                ForeignCurrencyHelper.Copy(submitted, expense);
+                ClearSettlement(expense);
+
+                var currencyError = ForeignCurrencyHelper.Validate(expense, isNew: true);
                 if (currencyError != null)
                 {
                     var badReq = req.CreateResponse(HttpStatusCode.BadRequest);
@@ -203,6 +223,13 @@ namespace FinanceHubFunctions.Functions
                 await errResp.WriteAsJsonAsync(new { error = ex.Message });
                 return errResp;
             }
+        }
+
+        private static void ClearSettlement(Expense expense)
+        {
+            expense.ActualGbpPaid = null;
+            expense.SettlementDate = null;
+            expense.SettlementBankTransactionId = null;
         }
 
         // ─────────────────────────────────────────────────
@@ -252,7 +279,10 @@ namespace FinanceHubFunctions.Functions
                 await badReq.WriteAsJsonAsync(new { error = currencyError }, HttpStatusCode.BadRequest);
                 return badReq;
             }
+            var (actualGbpPaid, settlementDate, settlementTransactionId) = (existing.ActualGbpPaid, existing.SettlementDate, existing.SettlementBankTransactionId);
             ForeignCurrencyHelper.Copy(updates!, existing);
+            // Settlement is recorded by the company, never by the employee
+            (existing.ActualGbpPaid, existing.SettlementDate, existing.SettlementBankTransactionId) = (actualGbpPaid, settlementDate, settlementTransactionId);
 
             // Update allowed fields
             existing.Supplier = updates.Supplier;
