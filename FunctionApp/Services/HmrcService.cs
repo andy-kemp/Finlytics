@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using FinanceHubFunctions.Data;
+using FinanceHubFunctions.Helpers;
 using FinanceHubFunctions.Models;
 
 namespace FinanceHubFunctions.Services
@@ -56,6 +57,12 @@ namespace FinanceHubFunctions.Services
                    $"&redirect_uri={Uri.EscapeDataString(_redirectUri)}" +
                    $"&state={Uri.EscapeDataString(state)}";
         }
+
+        /// <summary>Signed, expiring OAuth state carrying the frontend origin to return to.</summary>
+        public string CreateOAuthState(string returnOrigin) => OAuthState.Create(_clientSecret, DateTime.UtcNow, returnOrigin);
+
+        /// <summary>Returns the origin stored in a valid state, or null if the state is invalid or expired.</summary>
+        public string? VerifyOAuthState(string? state) => OAuthState.Verify(_clientSecret, state, DateTime.UtcNow);
 
         /// <summary>Exchanges authorization code for tokens and persists them to the DB.</summary>
         public async Task<HmrcToken> ExchangeCodeAsync(string code)

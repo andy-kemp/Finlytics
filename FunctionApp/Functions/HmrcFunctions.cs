@@ -8,6 +8,7 @@ using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using FinanceHubFunctions.Data;
+using FinanceHubFunctions.Helpers;
 using FinanceHubFunctions.Models;
 using FinanceHubFunctions.Services;
 
@@ -31,6 +32,12 @@ namespace FinanceHubFunctions.Functions
 
         // ── OAuth ─────────────────────────────────────────────────────────────
 
+        // Frontend origins HMRC may return to; override with comma-separated FrontendOrigins app setting
+        private static string[] FrontendOrigins() =>
+            (Environment.GetEnvironmentVariable("FrontendOrigins")
+                ?? "https://finhub.andykemp.cloud,https://zealous-desert-06b17b603.2.azurestaticapps.net")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
         /// <summary>
         /// Returns the HMRC OAuth authorization URL.
         /// The frontend opens this URL so the user can log in to Government Gateway.
@@ -41,12 +48,9 @@ namespace FinanceHubFunctions.Functions
             [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "hmrc/authorize")] HttpRequestData req)
         {
             var query = System.Web.HttpUtility.ParseQueryString(req.Url.Query);
-            var swaUrl = query["swaUrl"] ?? "";
 
-            // Encode swaUrl into state so callback knows where to redirect back to
-            var stateObj = new { swaUrl, nonce = Guid.NewGuid().ToString("N")[..8] };
-            var state = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(
-                JsonSerializer.Serialize(stateObj)));
+            // Signed state carries the (allow-listed) frontend origin so the callback knows where to return
+            var state = _hmrcService.CreateOAuthState(OAuthState.SafeOrigin(query["swaUrl"], FrontendOrigins()));
 
             var authUrl = _hmrcService.GetAuthorizationUrl(state);
 
@@ -70,16 +74,16 @@ namespace FinanceHubFunctions.Functions
             var stateRaw = query["state"] ?? "";
             var error    = query["error"];
 
-            // Decode state to recover the SWA URL to redirect back to
-            string swaUrl = "/";
-            try
+            // Only accept callbacks for flows started by the owner; never redirect off the allow-list
+            var stateOrigin = _hmrcService.VerifyOAuthState(stateRaw);
+            var swaUrl = OAuthState.SafeOrigin(stateOrigin, FrontendOrigins());
+            if (stateOrigin == null)
             {
-                var stateJson = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(stateRaw));
-                var stateObj  = JsonSerializer.Deserialize<JsonElement>(stateJson);
-                if (stateObj.TryGetProperty("swaUrl", out var su) && !string.IsNullOrEmpty(su.GetString()))
-                    swaUrl = su.GetString()!;
+                _logger.LogWarning("HMRC callback rejected: invalid or expired state");
+                var invalid = req.CreateResponse(HttpStatusCode.Found);
+                invalid.Headers.Add("Location", $"{swaUrl}/#hmrc-error=invalid_state");
+                return invalid;
             }
-            catch { /* use default */ }
 
             if (!string.IsNullOrEmpty(error) || string.IsNullOrEmpty(code))
             {
@@ -101,7 +105,7 @@ namespace FinanceHubFunctions.Functions
             {
                 _logger.LogError(ex, "HMRC token exchange failed");
                 var fail = req.CreateResponse(HttpStatusCode.Found);
-                fail.Headers.Add("Location", $"{swaUrl.TrimEnd('/')}/#hmrc-error={Uri.EscapeDataString(ex.Message)}");
+                fail.Headers.Add("Location", $"{swaUrl.TrimEnd('/')}/#hmrc-error={Uri.EscapeDataString("token_exchange_failed")}");
                 return fail;
             }
         }

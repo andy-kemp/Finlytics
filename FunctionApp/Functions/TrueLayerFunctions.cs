@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Azure.Identity;
 using Azure.Security.KeyVault.Secrets;
 using FinanceHubFunctions.Data;
+using FinanceHubFunctions.Helpers;
 using FinanceHubFunctions.Models;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Azure.Functions.Worker;
@@ -60,7 +61,15 @@ namespace FinanceHubFunctions.Functions
                 return err;
             }
 
-            var state = Guid.NewGuid().ToString("N");
+            var clientSecret = Environment.GetEnvironmentVariable("TrueLayerClientSecret");
+            if (string.IsNullOrEmpty(clientSecret))
+            {
+                var err = req.CreateResponse(HttpStatusCode.BadRequest);
+                await err.WriteAsJsonAsync(new { error = "TrueLayer client not configured" });
+                return err;
+            }
+
+            var state = Uri.EscapeDataString(OAuthState.Create(clientSecret, DateTime.UtcNow));
             var scopes = "info%20accounts%20balance%20transactions%20offline_access";
             var authUrl = $"{TrueLayerAuthUrl}/?response_type=code" +
                           $"&client_id={clientId}" +
@@ -96,6 +105,14 @@ namespace FinanceHubFunctions.Functions
 
                 var clientId = Environment.GetEnvironmentVariable("TrueLayerClientId");
                 var clientSecret = Environment.GetEnvironmentVariable("TrueLayerClientSecret");
+                var state = query.TryGetValue("state", out var s) ? s.ToString() : null;
+                if (OAuthState.Verify(clientSecret ?? "", state, DateTime.UtcNow) == null)
+                {
+                    _logger.LogWarning("TrueLayer callback rejected: invalid or expired state");
+                    var stateResp = req.CreateResponse(HttpStatusCode.Redirect);
+                    stateResp.Headers.Add("Location", $"{FrontendBankingUrl}?truelayer_error=invalid_state");
+                    return stateResp;
+                }
 
                 // Exchange code for access token
                 var client = _httpClientFactory.CreateClient();
@@ -114,7 +131,7 @@ namespace FinanceHubFunctions.Functions
                     var detail = await tokenResp.Content.ReadAsStringAsync();
                     _logger.LogError("TrueLayer token exchange failed: {Status} {Detail}", tokenResp.StatusCode, detail);
                     var errResp = req.CreateResponse(HttpStatusCode.Redirect);
-                    errResp.Headers.Add("Location", $"{FrontendBankingUrl}?truelayer_error={Uri.EscapeDataString($"Token exchange failed: {detail}")}");
+                    errResp.Headers.Add("Location", $"{FrontendBankingUrl}?truelayer_error={Uri.EscapeDataString("Token exchange failed")}");
                     return errResp;
                 }
 
