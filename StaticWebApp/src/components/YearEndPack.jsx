@@ -11,6 +11,7 @@ import {
     getVatReturns,
 } from '../services/apiService';
 import { useToast } from '../hooks/useToast';
+import { ctPaymentDeadline, ct600FilingDeadline, companiesHouseDeadline } from '../utils/corporationTax';
 
 // ── Helpers ──
 
@@ -250,9 +251,9 @@ export default function YearEndPack() {
         const overdue = fyInvoices.filter(i => i.status === 'Overdue');
 
         // Deadlines
-        const chDeadline = new Date(fyEnd); chDeadline.setMonth(chDeadline.getMonth() + 9);
-        const ctPayDeadline = new Date(fyEnd); ctPayDeadline.setMonth(ctPayDeadline.getMonth() + 9); ctPayDeadline.setDate(ctPayDeadline.getDate() + 2);
-        const ct600Deadline = new Date(fyEnd); ct600Deadline.setMonth(ct600Deadline.getMonth() + 12);
+        const chDeadline = companiesHouseDeadline(fyEnd);
+        const ctPayDeadline = ctPaymentDeadline(fyEnd);
+        const ct600Deadline = ct600FilingDeadline(fyEnd);
         const now = new Date();
 
         return {

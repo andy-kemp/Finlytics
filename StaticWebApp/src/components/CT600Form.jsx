@@ -11,6 +11,7 @@ import {
     getVatReturns,
 } from '../services/apiService';
 import { useToast } from '../hooks/useToast';
+import { ctPaymentDeadline, ct600FilingDeadline } from '../utils/corporationTax';
 
 // ── Helpers (shared logic with CTReport) ──
 
@@ -209,8 +210,9 @@ export default function CT600Form() {
         const totalAssetCost = fyAssets.reduce((s, a) => s + (a.purchasePrice ?? 0), 0);
         const aiaAllowance = Math.min(totalAssetCost, 1000000);
 
-        // Adjusted profit
-        const totalDeductions = totalAllowable + totalDlaAllowable + totalDlaCapital + totalPayroll + aiaAllowance;
+        // Adjusted profit (accounting profit after CA; non-CT items are deducted here and added back below)
+        const totalDeductions = totalAllowable + totalDlaAllowable + totalDlaCapital + totalPayroll + aiaAllowance
+            + totalDisallowable + totalDlaDisallowable;
         const adjustedProfit = turnover - totalDeductions;
         const taxableProfit = Math.max(0, adjustedProfit + totalDisallowable + totalDlaDisallowable);
 
@@ -226,12 +228,8 @@ export default function CT600Form() {
         const s455Charge = totalS455Base * 0.3375;
 
         // Deadlines
-        const ctPayDeadline = new Date(fyEnd);
-        ctPayDeadline.setMonth(ctPayDeadline.getMonth() + 9);
-        ctPayDeadline.setDate(ctPayDeadline.getDate() + 2);
-
-        const ct600Deadline = new Date(fyEnd);
-        ct600Deadline.setMonth(ct600Deadline.getMonth() + 12);
+        const ctPayDeadline = ctPaymentDeadline(fyEnd);
+        const ct600Deadline = ct600FilingDeadline(fyEnd);
 
         // Dividends
         const fyDivs = dividends.filter(d => {
@@ -540,7 +538,7 @@ not captured in Finlytics (e.g. capital gains, group relief, carried-forward los
                                 rows: [
                                     { box: '145', label: 'Turnover from trade', value: c.turnover, bold: true, note: `${c.fyInvoices.length} invoice(s) in period` },
                                     { box: '150', label: 'Other trading income', value: 0 },
-                                    { box: '155', label: 'Trading profits (before CA & add-backs)', value: c.turnover - c.totalAllowable - c.totalDlaAllowable - c.totalDlaCapital - c.totalPayroll },
+                                    { box: '155', label: 'Trading profits (before CA & add-backs)', value: c.turnover - c.totalAllowable - c.totalDlaAllowable - c.totalDlaCapital - c.totalPayroll - c.totalDisallowable - c.totalDlaDisallowable },
                                     { box: '160', label: 'Trading losses brought forward', value: 0, note: 'Enter manually if applicable' },
                                 ],
                             },

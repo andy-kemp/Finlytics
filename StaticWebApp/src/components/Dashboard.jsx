@@ -8,7 +8,7 @@ import { unclaimedExpenses } from '../utils/unclaimedExpenses.mjs';
 import { calculateAvailableAfterTax, calculateBookCashWithPots } from '../utils/potBalances.mjs';
 import { calculateRecordedTradingCash } from '../utils/cashCalculations.mjs';
 import { calculateMainAccountBookBalance, loadMainAccountCashBaseline } from '../utils/cashBaseline.mjs';
-import { calculateCorporationTax } from '../utils/corporationTax';
+import { calculateCorporationTax, ctPaymentDeadline } from '../utils/corporationTax';
 import {
     getInvoices,
     getExpenses,
@@ -565,7 +565,7 @@ export default function Dashboard({ onNavigate }) {
                 while (fyEnd < now) {
                     fyEnd = new Date(fyEnd.getFullYear() + 1, fyEnd.getMonth(), fyEnd.getDate());
                 }
-                const ctDeadline = new Date(fyEnd.getFullYear(), fyEnd.getMonth() + 9, fyEnd.getDate() + 1);
+                const ctDeadline = ctPaymentDeadline(fyEnd);
                 const daysUntilCt = Math.ceil((ctDeadline - now) / 86400000);
 
                 upcomingDeadlines.push({
