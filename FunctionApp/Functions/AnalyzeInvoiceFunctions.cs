@@ -375,6 +375,13 @@ namespace FinanceHubFunctions.Functions
                     });
                 }
 
+                // Whole-document totals: prefer the printed total over summing lines, because receipt
+                // line extraction can include subtotal/total rows and double-count.
+                var lineGross = lines.Sum(l => l.AmountGross);
+                var lineVat   = lines.Sum(l => l.VatAmount);
+                var docGross  = invoiceTotal ?? (subTotal.HasValue ? subTotal + (totalTax ?? 0m) : lineGross);
+                var docVat    = totalTax ?? (lines.Count > 0 ? lineVat : 0m);
+
                 var payload = new
                 {
                     configured  = true,
@@ -383,6 +390,9 @@ namespace FinanceHubFunctions.Functions
                     invoiceDate = invoiceDate?.ToString("yyyy-MM-dd"),
                     invoiceRef  = invoiceId,
                     currency    = currency,
+                    amountNet   = Math.Round(docGross.Value - docVat, 2),
+                    vatAmount   = Math.Round(docVat, 2),
+                    amountGross = Math.Round(docGross.Value, 2),
                     lines       = lines
                 };
 

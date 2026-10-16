@@ -47,9 +47,12 @@ test('capture callers pass scan locks, protect confirmed edits and save foreign 
         assert.match(source, /detectCurrency \|\| unsupported/);
         assert.match(source, /if \(unsupported\) showToast/);
         assert.match(source, /sequence === captureSequence.current\) setCaptureScanning\(false\)/);
-        assert.match(source, /changeInvoiceCurrency\(line, resolveInvoiceCurrency/);
     }
-    assert.equal((expense.match(/entryDate: new Date\(formData.invoiceDate\).toISOString\(\)/g) || []).length, 2);
+    // Expenses captures a receipt as one total on the main form; DLA keeps editable capture lines
+    assert.match(expense, /changeInvoiceCurrency\(formData, resolveInvoiceCurrency/);
+    assert.match(dla, /changeInvoiceCurrency\(line, resolveInvoiceCurrency/);
+    assert.equal((expense.match(/entryDate: new Date\(formData.invoiceDate\).toISOString\(\)/g) || []).length, 1);
+    assert.match(expense, /formData.invoiceDate \? formData.invoiceDate : normalizedDatePaid/);
     assert.match(expense, /datePaid: normalizedDatePaid/);
     assert.match(expense, /datePaid:\s+normalizeDateForApi\(scan.invoiceDate\) \|\| prev.datePaid/);
 });

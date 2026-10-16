@@ -57,7 +57,6 @@ const Expenses = ({ openNew }) => {
     const [savingNoReceiptReason, setSavingNoReceiptReason] = useState(false);
     const captureInputRef = useRef(null);
     const formFileRef = useRef(null);
-    const [captureLines, setCaptureLines] = useState([]);
     const [detectCurrency, setDetectCurrency] = useState(true);
     const captureSequence = useRef(0);
 
@@ -399,7 +398,6 @@ const Expenses = ({ openNew }) => {
             ...(!editingExpense && !formData.currencyExplicit && !formData.unsupportedScanCurrency ? { ...changeInvoiceCurrency(formData, resolveInvoiceCurrency(null, supplier.currency)), currencyExplicit: false } : {}),
             supplier: supplier.name
         });
-        setCaptureLines(lines => lines.map(line => line.currencyExplicit || line.unsupportedScanCurrency ? line : { ...line, ...changeInvoiceCurrency(line, resolveInvoiceCurrency(null, supplier.currency)), currencyExplicit: false }));
         setShowSupplierDropdown(false);
     };
 
@@ -411,7 +409,6 @@ const Expenses = ({ openNew }) => {
     const resetForm = () => {
         captureSequence.current += 1;
         setCaptureScanning(false);
-        setCaptureLines([]);
         setFormData({
             ...currencyMetadata(),
             invoiceDate: '',
@@ -444,7 +441,7 @@ const Expenses = ({ openNew }) => {
     const handleSubmit = async (e) => {
         e.preventDefault();
         if (captureScanning) return;
-        const rows = captureLines.length ? captureLines : [formData];
+        const rows = [formData];
         const invalid = rows.map(currencyValidation).find(Boolean);
         if (invalid) { showToast(invalid, 'error'); return; }
         if (rows.some(row => (row.originalCurrency || 'GBP') !== 'GBP' && (!(Number(row.amountGross) > 0) || row.amountNet === '' || row.vatAmount === ''))) {
@@ -454,62 +451,6 @@ const Expenses = ({ openNew }) => {
         const normalizedRecurringNextDate = formData.isRecurring
             ? normalizeDateForApi(formData.recurringNextDate)
             : null;
-
-        if (captureLines.length) {
-            if (captureLines.some(line => !line.description.trim() || !(Number(line.amountGross) > 0))) {
-                showToast('Each captured line needs a description and positive GBP gross amount.', 'error'); return;
-            }
-            if (formData.isDLA && !formData.dlaDirector) { showToast('Select a director.', 'error'); return; }
-            setProcessing(true);
-            setProcessingMessage('Saving invoice lines...');
-            let savedCount = 0;
-            try {
-                const headers = await getAuthHeaders();
-                for (const line of captureLines) {
-                    const payload = {
-                        ...formData, ...currencyPayload(line),
-                        amountNet: Number(line.amountNet), vatAmount: Number(line.vatAmount), amountGross: Number(line.amountGross),
-                        datePaid: normalizedDatePaid,
-                        ...((line.originalCurrency || 'GBP') !== 'GBP' && formData.invoiceDate ? { entryDate: new Date(formData.invoiceDate).toISOString() } : {}),
-                        taxYear: calculateTaxYear(normalizedDatePaid), financialYear: calculateFinancialYear(normalizedDatePaid),
-                        notes: [formData.notes, line.description].filter(Boolean).join('\n'),
-                        ctTag: formData.ctTag || getDefaultCtTag(formData.category)
-                    };
-                    delete payload.currencyExplicit;
-                    delete payload.invoiceDate;
-                    delete payload.conversionPending;
-                    delete payload.unsupportedScanCurrency;
-                    let saved;
-                    if (formData.isDLA) {
-                        const response = await fetch(`${API_BASE}/dla`, {
-                            method: 'POST', headers,
-                            body: JSON.stringify({ ...payload, director: formData.dlaDirector, direction: 'OwedToDirector', description: `${formData.supplier} - ${line.description}`, entryDate: payload.entryDate || new Date(normalizedDatePaid).toISOString(), datePaid: null })
-                        });
-                        if (!response.ok) throw new Error('Failed to create DLA invoice line.');
-                        saved = await response.json();
-                    } else {
-                        saved = await createExpense(payload);
-                    }
-                    savedCount += 1;
-                    setCaptureLines(previous => previous.slice(1));
-                    try {
-                        if (!saved?.id) throw new Error('No ID returned for receipt attachment.');
-                        for (const file of selectedFiles) {
-                            if (formData.isDLA) {
-                                const attachment = new FormData(); attachment.append('file', file);
-                                const response = await fetch(`${API_BASE}/dla/${saved.id}/upload`, { method: 'POST', headers: { Authorization: headers.Authorization }, body: attachment });
-                                if (!response.ok) throw new Error('Receipt upload failed.');
-                            } else await uploadReceipt(saved.id, file);
-                        }
-                    } catch (failure) { showToast(`Line saved, but receipt attachment failed: ${failure.message}`, 'warning'); }
-                }
-                resetForm();
-                showToast(`Saved ${savedCount} invoice lines.`, 'success');
-                await loadData();
-            } catch (failure) { showToast(`${failure.message} ${savedCount} lines saved; only unsaved lines remain.`, 'error'); }
-            finally { setProcessing(false); }
-            return;
-        }
 
         // ── Route isDLA saves straight into the DLA table ──────────────────
         if (formData.isDLA && !editingExpense) {
@@ -667,7 +608,6 @@ const Expenses = ({ openNew }) => {
     const handleEdit = (expense) => {
         captureSequence.current += 1;
         setCaptureScanning(false);
-        setCaptureLines([]);
         // Prefer datePaid (the field we write on save). Fall back to entryDate (legacy read field).
         const rawDate = expense.datePaid || expense.entryDate;
         const displayDate = rawDate ? new Date(rawDate).toISOString().split('T')[0] : '';
@@ -754,7 +694,6 @@ const Expenses = ({ openNew }) => {
     const handleCancelEdit = () => {
         captureSequence.current += 1;
         setCaptureScanning(false);
-        setCaptureLines([]);
         setEditingExpense(null);
         setExistingAttachments([]);
         setFormData({
@@ -785,7 +724,6 @@ const Expenses = ({ openNew }) => {
     // ── Receipt Quick Capture (drag & drop / photo) ───────────────────────────
     const openExpenseCapture = async (file) => {
         const sequence = ++captureSequence.current;
-        setCaptureLines([]);
         // Pre-attach file so it uploads on save
         setSelectedFiles([file]);
         // Reset & open form
@@ -826,16 +764,6 @@ const Expenses = ({ openNew }) => {
                 const unsupported = !!scanCurrency && !['GBP', 'EUR', 'USD'].includes(scanCurrency);
                 const detected = !!scanCurrency && (detectCurrency || unsupported);
                 const invoice = detected ? scan : { ...scan, currency: null };
-                const lines = (scan.lines || []).map(line => ({
-                    ...currencyMetadata(), description: line.description || 'Invoice item',
-                    ...scannedCurrencyAmounts(invoice, {
-                        amountNet: line.originalAmountNet ?? line.amountNet ?? '',
-                        vatAmount: line.originalVatAmount ?? line.vatAmount ?? 0,
-                        amountGross: line.originalAmountGross ?? line.amountGross ?? ''
-                    }, supplier?.currency),
-                    currencyExplicit: detected
-                }));
-                setCaptureLines(lines);
                 setFormData(prev => ({
                     ...prev,
                     ...scannedCurrencyAmounts(invoice, {
@@ -1280,7 +1208,7 @@ const Expenses = ({ openNew }) => {
                                     onChange={(e) => {
                                         const newVatApplicability = e.target.value;
                                         setFormData({ ...formData, vatApplicability: newVatApplicability });
-                                        if (captureLines.length || (formData.originalCurrency || 'GBP') !== 'GBP') return;
+                                        if ((formData.originalCurrency || 'GBP') !== 'GBP') return;
                                         // Recalculate VAT with new applicability
                                         if (formData.amountGross && parseFloat(formData.amountGross) > 0) {
                                             const calculated = calculateVAT(true, formData.amountGross, newVatApplicability);
@@ -1311,17 +1239,8 @@ const Expenses = ({ openNew }) => {
                         </div>
 
                         <label className="form-group">Invoice date<input type="date" value={formData.invoiceDate || ''} disabled={captureScanning} onChange={event => setFormData(previous => ({ ...previous, invoiceDate: event.target.value }))} /></label>
-                        {!captureLines.length && <ForeignCurrencyFields key={editingExpense?.id || 'new'} value={formData} onChange={change => setFormData(previous => ({ ...previous, ...change }))} invoiceDate={formData.invoiceDate} paymentDate={formData.datePaid} disabled={captureScanning} preserveAccounting={!!editingExpense} confirmed={editingExpense?.actualGbpPaid != null} />}
-                        {captureLines.map((line, index) => (
-                            <div key={index} style={{ borderBottom: '1px solid #ddd', padding: '0.75rem 0' }}>
-                                <label className="form-group">Line {index + 1} description<input value={line.description} required disabled={captureScanning} onChange={event => setCaptureLines(previous => previous.map((row, rowIndex) => rowIndex === index ? { ...row, description: event.target.value } : row))} /></label>
-                                <ForeignCurrencyFields value={line} onChange={change => setCaptureLines(previous => previous.map((row, rowIndex) => rowIndex === index ? { ...row, ...change } : row))} invoiceDate={formData.invoiceDate} paymentDate={formData.datePaid} disabled={captureScanning} />
-                                <div className="foreign-currency-fields" style={{ marginTop: '0.75rem' }}>
-                                    {['amountNet', 'vatAmount', 'amountGross'].map((field, fieldIndex) => <label key={field} className="form-group">{['Net (GBP)', 'UK VAT (GBP)', 'Gross (GBP)'][fieldIndex]}<input type="number" min="0" step="0.01" required disabled={captureScanning} value={line[field]} onChange={event => setCaptureLines(previous => previous.map((row, rowIndex) => rowIndex === index ? { ...row, ...updateCurrencyFields(row, { [field]: event.target.value }) } : row))} /></label>)}
-                                </div>
-                            </div>
-                        ))}
-                        {!captureLines.length && <div className="form-row" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))' }}>
+                        <ForeignCurrencyFields key={editingExpense?.id || 'new'} value={formData} onChange={change => setFormData(previous => ({ ...previous, ...change }))} invoiceDate={formData.invoiceDate} paymentDate={formData.datePaid} disabled={captureScanning} preserveAccounting={!!editingExpense} confirmed={editingExpense?.actualGbpPaid != null} />
+                        <div className="form-row" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))' }}>
                             <div className="form-group">
                                 <label>Net (GBP)</label>
                                 <input
@@ -1372,7 +1291,7 @@ const Expenses = ({ openNew }) => {
                                     placeholder="Enter post-VAT amount"
                                 />
                             </div>
-                        </div>}
+                        </div>
 
                         <div className="form-row">
                             <div className="form-group">

@@ -109,9 +109,10 @@ export default function Expenses() {
       if (scan && scan.configured === false) {
         setCaptureScanToast('noOcr')
       } else if (scan && scan.found) {
-        const totalNet = scan.lines?.reduce((s, l) => s + (l.amountNet || 0), 0) || 0
-        const totalVat = scan.lines?.reduce((s, l) => s + (l.vatAmount || 0), 0) || 0
-        const totalGross = scan.lines?.reduce((s, l) => s + (l.amountGross || 0), 0) || 0
+        // Use the receipt's printed total; summing scanned lines can double-count subtotal/total rows
+        const totalNet = scan.amountNet || 0
+        const totalVat = scan.vatAmount || 0
+        const totalGross = scan.amountGross || 0
         setForm(f => ({
           ...f,
           supplier: scan.vendor || f.supplier,

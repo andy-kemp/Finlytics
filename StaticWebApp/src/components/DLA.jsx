@@ -1195,24 +1195,24 @@ const DLA = ({ openNew }) => {
                     invoiceDate: scan.invoiceDate || prev.invoiceDate,
                     invoiceRef:  scan.invoiceRef  || prev.invoiceRef
                 }));
-                // Pre-fill lines
+                // Pre-fill a single line with the receipt total; lines can be relabelled, adjusted or added by hand
                 const scanCurrency = String(scan.currency || '').trim().toUpperCase();
                 const unsupported = !!scanCurrency && !['GBP', 'EUR', 'USD'].includes(scanCurrency);
-                if (unsupported || (scan.lines && scan.lines.length > 0)) {
+                if (unsupported || scan.amountGross != null) {
                     const supplier = suppliers.find(item => item.name?.toLowerCase() === scan.vendor?.toLowerCase());
                     const detected = !!scanCurrency && (detectCurrency || unsupported);
                     const invoice = detected ? scan : { ...scan, currency: null };
-                    setCaptureLines((scan.lines?.length ? scan.lines : [{}]).map(l => ({
+                    setCaptureLines([{
                         ...currencyMetadata(),
-                        description: l.description || '',
+                        description: scan.vendor ? `${scan.vendor} receipt` : 'Receipt',
                         ...scannedCurrencyAmounts(invoice, {
-                            amountNet: l.originalAmountNet ?? l.amountNet ?? '',
-                            vatAmount: l.originalVatAmount ?? l.vatAmount ?? 0,
-                            amountGross: l.originalAmountGross ?? l.amountGross ?? ''
+                            amountNet: scan.originalAmountNet ?? scan.amountNet ?? '',
+                            vatAmount: scan.originalVatAmount ?? scan.vatAmount ?? 0,
+                            amountGross: scan.originalAmountGross ?? scan.amountGross ?? ''
                         }, supplier?.currency),
                         currencyExplicit: detected,
-                        vatExempt:   (l.vatAmount || 0) === 0
-                    })));
+                        vatExempt:   (scan.vatAmount || 0) === 0
+                    }]);
                 }
                 setCaptureScanToast(unsupported ? 'error' : 'success');
                 if (unsupported) showToast(`Unsupported invoice currency ${scanCurrency}. Scan amounts were cleared; enter a supported conversion manually.`, 'error');
